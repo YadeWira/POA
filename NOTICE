@@ -1,0 +1,12 @@
+POA
+Copyright (c) 2026 Yade Bravo (YadeWira)
+Licensed under the MIT License (see LICENSE).
+
+Third-party work
+----------------
+
+The Ogg container (pas/poaogg.pas) is written from RFC 3533.
+
+balrogg (https://github.com/iczelia/balrogg, GPL-3.0) was studied as a
+reference for what lossless Vorbis/Opus recompression can achieve. No code
+from it is used, copied or translated in POA.

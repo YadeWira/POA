@@ -1,0 +1,8 @@
+*.o
+*.ppu
+*.a
+*.exe
+build/
+__pycache__/
+credenciales.md
+handoff.md

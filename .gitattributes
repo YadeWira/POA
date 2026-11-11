@@ -1,0 +1,6 @@
+* text=auto eol=lf
+*.ogg binary
+*.opus binary
+*.spx binary
+*.ogv binary
+*.poa binary
