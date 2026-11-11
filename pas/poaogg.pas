@@ -86,6 +86,13 @@ function OggStreams(const a: TBytes; const s: TOggScan): TOggStreams;
 
 function OggCodecName(c: TOggCodec): string;
 
+type
+  TPacketList = array of TBytes;
+
+{ The complete packets of one logical stream, in order. A last packet that
+  never ends is not included. }
+function OggStreamPackets(const a: TBytes; const s: TOggScan; aSerial: LongWord): TPacketList;
+
 implementation
 
 var
@@ -305,10 +312,12 @@ begin
   for i := 0 to High(s.Pages) do
   begin
     pg := @s.Pages[i];
+    { the latest stream with this serial; a BOS page starts a new one
+      (a chained file may reuse the serial of the link before) }
     k := -1;
-    for j := 0 to High(Result) do
+    for j := High(Result) downto 0 do
       if Result[j].Serial = pg^.Serial then begin k := j; Break; end;
-    if k < 0 then
+    if (k < 0) or ((pg^.HType and OGG_FLAG_BOS) <> 0) then
     begin
       k := Length(Result);
       SetLength(Result, k + 1);
@@ -346,6 +355,40 @@ begin
   end;
   for k := 0 to High(Result) do
     Result[k].Unterminated := open[k];
+end;
+
+function OggStreamPackets(const a: TBytes; const s: TOggScan; aSerial: LongWord): TPacketList;
+var
+  i, seg, pos, j, n: SizeInt;
+  cur: TBytes;
+begin
+  Result := nil;
+  n := 0;
+  cur := nil;
+  for i := 0 to High(s.Pages) do
+    with s.Pages[i] do
+    begin
+      if Serial <> aSerial then Continue;
+      pos := DataPos;
+      for seg := 0 to NSeg - 1 do
+      begin
+        if Lacing[seg] > 0 then
+        begin
+          j := Length(cur);
+          SetLength(cur, j + Lacing[seg]);
+          Move(a[pos], cur[j], Lacing[seg]);
+          Inc(pos, Lacing[seg]);
+        end;
+        if Lacing[seg] < 255 then
+        begin
+          if n >= Length(Result) then SetLength(Result, 2 * n + 16);
+          Result[n] := cur;
+          Inc(n);
+          cur := nil;
+        end;
+      end;
+    end;
+  SetLength(Result, n);
 end;
 
 initialization
