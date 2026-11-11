@@ -120,6 +120,24 @@ type
 
   TVbStatus = (vsOk, vsNotAudio, vsBadMode, vsBadCode, vsEop);
 
+  { Where the walker gets its symbols from: the packet's bits when
+    compressing, the model when decompressing. ev carries everything about
+    the symbol except its value (Book is the codebook or the bit width). }
+  TVbSource = class
+    Status: TVbStatus;
+    function Raw(const ev: TVbEvent): LongWord; virtual; abstract;
+    function Code(const ev: TVbEvent): Integer; virtual; abstract;   { -1: failed, Status says why }
+    function Eop: Boolean; virtual;
+  end;
+
+  TVbBitSource = class(TVbSource)
+    Br: TBitReader;
+    Setup: ^TVorbisSetup;
+    function Raw(const ev: TVbEvent): LongWord; override;
+    function Code(const ev: TVbEvent): Integer; override;
+    function Eop: Boolean; override;
+  end;
+
 { Header packets. Return False when the packet is not a valid header of
   that type (the stream is then left as bytes). }
 function VorbisReadIdent(const a: TBytes; first, len: SizeInt; var s: TVorbisSetup): Boolean;
@@ -127,6 +145,10 @@ function VorbisReadSetup(const a: TBytes; first, len: SizeInt; var s: TVorbisSet
 
 function VorbisReadAudio(const s: TVorbisSetup; const a: TBytes; first, len: SizeInt;
   var p: TVbPacket): TVbStatus;
+
+{ The packet structure, walked with symbols from src. Events go to p. The
+  packet-type bit is not part of it (the caller handles it). }
+function VorbisWalk(const s: TVorbisSetup; src: TVbSource; var p: TVbPacket): TVbStatus;
 
 { The packet's bytes from its events and its tail (taken from the original
   packet a[first..], since the tail is not modelled yet). }
@@ -573,29 +595,89 @@ begin
   Inc(Count);
 end;
 
+function TVbSource.Eop: Boolean;
+begin
+  Result := False;
+end;
+
+function TVbBitSource.Raw(const ev: TVbEvent): LongWord;
+begin
+  Result := Br.Read(ev.Book);
+end;
+
+function TVbBitSource.Code(const ev: TVbEvent): Integer;
+begin
+  Result := Setup^.Books[ev.Book].Decode(Br);
+  if Result < 0 then
+    if Br.Eop then Status := vsEop else Status := vsBadCode;
+end;
+
+function TVbBitSource.Eop: Boolean;
+begin
+  Result := Br.Eop;
+end;
+
 function VorbisReadAudio(const s: TVorbisSetup; const a: TBytes; first, len: SizeInt;
   var p: TVbPacket): TVbStatus;
 var
-  br: TBitReader;
+  src: TVbBitSource;
+begin
+  p.Count := 0;
+  p.TailPos := 0;
+  p.TailBits := 0;
+  if not s.HaveSetup or (len = 0) then Exit(vsNotAudio);
+  src := TVbBitSource.Create;
+  try
+    src.Setup := @s;
+    src.Br.Init(a, first, len);
+    if src.Br.Read(1) <> 0 then Exit(vsNotAudio);
+    Result := VorbisWalk(s, src, p);
+    if Result = vsOk then
+    begin
+      p.TailPos := src.Br.Pos;
+      p.TailBits := len * 8 - src.Br.Pos;
+    end;
+  finally
+    src.Free;
+  end;
+end;
+
+function VorbisWalk(const s: TVorbisSetup; src: TVbSource; var p: TVbPacket): TVbStatus;
+var
   mode, ch, i, j, k, sm, yi, part, cls, cdim, cbits, csub, cval, book, rng, ybits: Integer;
   m: ^TMapping;
   fl: ^TFloor;
   noRes: array[0..VB_MAX_CH] of Boolean;
   bs: Integer;
   status: TVbStatus;
+  ev: TVbEvent;
+
+  procedure Prep(tag: TVbTag; isCode: Boolean; c, pass, b: Integer);
+  begin
+    ev.Tag := tag;
+    ev.IsCode := isCode;
+    ev.Ch := c;
+    ev.Pass := pass;
+    ev.Book := b;
+    ev.Pos := p.CurPos;
+    ev.Sub := p.CurSub;
+    ev.Val := 0;
+  end;
 
   function Raw(tag: TVbTag; c, pass, n: Integer): LongWord;
   begin
-    Result := br.Read(n);
+    Prep(tag, False, c, pass, n);
+    Result := src.Raw(ev);
     p.Add(tag, False, c, pass, n, Result);
   end;
 
   function Code(tag: TVbTag; c, pass, b: Integer): Integer;
   begin
-    Result := s.Books[b].Decode(br);
+    Prep(tag, True, c, pass, b);
+    Result := src.Code(ev);
     if Result < 0 then
     begin
-      if br.Eop then status := vsEop else status := vsBadCode;
+      status := src.Status;
       Exit;
     end;
     p.Add(tag, True, c, pass, b, Result);
@@ -679,15 +761,9 @@ begin
   p.Count := 0;
   p.CurPos := 0;
   p.CurSub := 0;
-  p.TailPos := 0;
-  p.TailBits := 0;
   status := vsOk;
-  if not s.HaveSetup then Exit(vsNotAudio);
-  if len = 0 then Exit(vsNotAudio);
-  br.Init(a, first, len);
-  if br.Read(1) <> 0 then Exit(vsNotAudio);
   mode := Raw(vtMode, 0, 0, s.ModeBits);
-  if br.Eop then Exit(vsEop);
+  if src.Eop then Exit(vsEop);
   if mode >= Length(s.Modes) then Exit(vsBadMode);
   p.BlockFlag := s.Modes[mode].BlockFlag;
   if p.BlockFlag <> 0 then
@@ -745,7 +821,7 @@ begin
               if Code(vtFloorY, ch, cls, book) < 0 then Exit(status);
           end;
         end;
-        if br.Eop then Exit(vsEop);
+        if src.Eop then Exit(vsEop);
         noRes[ch] := False;
       end
     else
@@ -754,7 +830,7 @@ begin
         p.CurPos := 0;
         if Raw(vtF0Amp, ch, 0, AmpBits) = 0 then Continue;
         k := Raw(vtF0Book, ch, 0, ILog(Length(Books)));
-        if br.Eop then Exit(vsEop);
+        if src.Eop then Exit(vsEop);
         if k >= Length(Books) then Exit(vsBadCode);
         book := Books[k];
         i := 0;
@@ -802,8 +878,7 @@ begin
     else if not DecodeResidue(r^, chans, dnd, bs div 2) then Exit(status);
   end;
 
-  p.TailPos := br.Pos;
-  p.TailBits := len * 8 - br.Pos;
+  if src.Eop then Exit(vsEop);
   Result := vsOk;
 end;
 
