@@ -132,12 +132,14 @@ static uint32_t rd32(const uint8_t *p) {
    every stream it began has ended (EOS), or up to where the next bytes are
    not a whole page (at the end of the input, eof). EXT_MORE if n bytes are
    not enough to tell. x keeps where it got to between calls on the same
-   file with more bytes each time (start it as EXT_START), so that a long
+   file with more bytes each time (start it with ext_start), so that a long
    file is walked once. A page whose CRC does not match ends the file
    before it (a false signature, inside other data, has almost never a
    right CRC): what follows goes through as bytes and the search goes on. */
 typedef struct { size_t i; int pages, nopen; uint32_t open[MAX_SERIALS]; } ext_t;
-static const ext_t EXT_START = {0, 0, 0, {0}};
+/* field by field: a struct copy or a zeroed array would be a memset or
+   memcpy call, and the library has no C runtime */
+static void ext_start(ext_t *x) { x->i = 0; x->pages = 0; x->nopen = 0; }
 static ptrdiff_t ogg_extent(const uint8_t *p, size_t n, int eof, ext_t *x) {
   size_t i = x->i;
   crc_init();
@@ -348,7 +350,8 @@ int poafilter_encode(poa_read_fn read, void *read_ctx, poa_write_fn write, void 
       continue;
     }
     ptrdiff_t len;
-    ext_t x = EXT_START;
+    ext_t x;
+    ext_start(&x);
     for (;;) {
       len = ogg_extent(s.buf + c, s.have - c, s.eof, &x);
       if (len != EXT_MORE || s.eof || s.err || s.have - c > MAX_FILE) break;
