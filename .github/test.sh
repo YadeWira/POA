@@ -20,6 +20,10 @@ POA=$OUT/poa pas/tests/cli.sh | tail -1
 POA=$OUT/poa LC_ALL=C pas/tests/corpus.sh tests/ogg/* | tail -1
 case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) EXE=.exe ;; *) EXE= ;; esac
 echo "== libpoa"
+# a C compiler given by its full path (MSYS2's MinGW-w64 gcc on Windows)
+# needs its own folder on PATH for its DLLs and its cc1/as; without it, it
+# fails without a word (from PJA's test.sh)
+case ${CC:-} in /*) PATH=$(dirname "$CC"):$PATH; export PATH ;; esac
 # a few samples of each codec: the test runs each one several ways
 LIBSET="tests/ogg/vorbis_click.ogg tests/ogg/vorbis_q3_8000_mono.ogg tests/ogg/vorbis_chained.ogg tests/ogg/vorbis_51.ogg tests/ogg/opus_16k_mono.opus tests/ogg/speex_16k.spx tests/ogg/theora_vorbis.ogv"
 sh pas/lib/build.sh "$OUT/lib" > "$OUT/lib.log" 2>&1 || { cat "$OUT/lib.log"; echo "FAIL: libpoa did not build"; exit 1; }
