@@ -14,13 +14,14 @@ FPC=${FPC:-fpc}
 # absolute /d/a/... path would reach it mangled. OUT is relative to it too.
 cd "$HERE"
 HERE=.
+case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) EXE=.exe ;; *) EXE= ;; esac
 mkdir -p "$OUT/rel" "$OUT/tests/u"
 # -B: the program is rebuilt every time, so that it takes the commit and the date
-$FPC -B -O3 -dPOA_FAST -Fu"$HERE/pas" -FU"$OUT/rel" -o"$OUT/poa" "$HERE/pas/poa.pas" > "$OUT/fpc.log" 2>&1 \
+$FPC -B -O3 -dPOA_FAST -Fu"$HERE/pas" -FU"$OUT/rel" -o"$OUT/poa$EXE" "$HERE/pas/poa.pas" > "$OUT/fpc.log" 2>&1 \
   || { cat "$OUT/fpc.log"; exit 1; }
 cp "$OUT/fpc.log" "$OUT/fpc-poa.log"
 for t in test_ogg test_vorbis test_vbmodel test_side test_blake3; do
-  $FPC -O1 -Fu"$HERE/pas" -FU"$OUT/tests/u" -o"$OUT/tests/$t" "$HERE/pas/tests/$t.pas" > "$OUT/fpc.log" 2>&1 \
+  $FPC -O1 -Fu"$HERE/pas" -FU"$OUT/tests/u" -o"$OUT/tests/$t$EXE" "$HERE/pas/tests/$t.pas" > "$OUT/fpc.log" 2>&1 \
     || { cat "$OUT/fpc.log"; exit 1; }
 done
 echo "built $OUT/poa and $OUT/tests"
