@@ -18,7 +18,7 @@ apath() {
   case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) p=$(echo "$p" | sed -E 's|^/([A-Za-z])/|\1:/|') ;; esac
   echo "$p"
 }
-HERE=$(apath "$(dirname "$0")"); PAS=$(dirname "$HERE")
+HERE=$(apath "$(dirname "$0")"); PAS=$(dirname "$HERE"); VEND=$(apath "$PAS/../vendor/pja/pas")
 FPC=${FPC:-fpc}
 CC=${CC:-cc}
 mkdir -p "$OUT/c" "$OUT/u"
@@ -32,6 +32,9 @@ if [ -n "$WIN" ]; then PIC=; EXT=dll; else PIC=-fPIC; EXT=so; fi
 # at, so that a program linked against it finds it by its own rpath
 LDN=
 if [ -z "$WIN" ] && [ "$(uname -s)" = Darwin ]; then EXT=dylib; LDN="-k-install_name -k@rpath/poa.dylib"; fi
+# the vendored PJA's C part (the covers' JPEGs), position-independent
+# shellcheck disable=SC2086
+CC="$CC" sh "$VEND/build_c.sh" "$OUT/c" $PIC
 FLAGS="-O3 -fwrapv -ffp-contract=off -fno-stack-protector"
 # no memset or memcpy calls: the DLL has no C runtime
 if $CC --version 2>/dev/null | grep -qi clang; then
@@ -52,6 +55,6 @@ echo "units from $PAS, objects in $OUT/c"
 # MSYS would take "-Fud:/..." for a list of paths (the colon) and rewrite
 # it: no conversion for FreePascal's arguments
 # shellcheck disable=SC2086
-MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' $FPC -O3 -dPOA_FAST $CG $LDN -Fu"$PAS" -Fi"$PAS" -Fo"$OUT/c" -FU"$OUT/u" -o"$OUT/poa.$EXT" "$HERE/poalib.pas" \
+MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' $FPC -O3 -dPOA_FAST -dPJA_FAST $CG $LDN -Fu"$PAS" -Fi"$PAS" -Fu"$VEND" -Fi"$VEND" -Fo"$OUT/c" -FU"$OUT/u" -o"$OUT/poa.$EXT" "$HERE/poalib.pas" \
   > "$OUT/fpc.log" 2>&1 || { cat "$OUT/fpc.log"; exit 1; }
 echo "$OUT/poa.$EXT"

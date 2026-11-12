@@ -796,11 +796,11 @@ const
   SELFTEST_COUNT = 3;
   SELFTEST_NAMES: array[0..SELFTEST_COUNT - 1] of string = ('vorbis_click.ogg', 'vorbis_silence.ogg', 'opus_16k_mono.opus');
   { the .poa of each: its size and BLAKE3-128 }
-  SELFTEST_POA_SIZE: array[0..SELFTEST_COUNT - 1] of SizeInt = (717, 315, 6299);
+  SELFTEST_POA_SIZE: array[0..SELFTEST_COUNT - 1] of SizeInt = (718, 316, 6300);
   SELFTEST_POA_HASH: array[0..SELFTEST_COUNT - 1, 0..15] of Byte = (
-    ($7E, $57, $66, $E9, $4F, $1D, $30, $60, $12, $A9, $C5, $B5, $75, $14, $0D, $0F),
-    ($66, $5A, $D0, $47, $5C, $FA, $D0, $B9, $F0, $BD, $45, $0B, $EB, $74, $6B, $EB),
-    ($39, $14, $46, $71, $EE, $23, $A4, $68, $CA, $37, $DA, $A0, $0B, $26, $F6, $69)
+    ($D9, $06, $EB, $D6, $50, $30, $49, $42, $36, $3E, $B7, $EA, $F9, $90, $8E, $75),
+    ($C1, $06, $E7, $78, $2E, $78, $43, $1B, $E8, $05, $16, $64, $D0, $09, $B3, $67),
+    ($71, $2E, $6D, $2A, $72, $39, $77, $79, $F5, $ED, $D1, $37, $1D, $67, $7C, $09)
   );
 
 { sample k, and the BLAKE3-128 its .poa has to have }

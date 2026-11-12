@@ -7,6 +7,10 @@ Third-party work
 
 The Ogg container (pas/poaogg.pas) is written from RFC 3533.
 
+PJA (vendor/pja, https://github.com/YadeWira/PJA, 0.9.8, MIT, same
+author) recompresses the JPEG cover art of comment headers; its own
+third-party notes are in vendor/pja/NOTICE.
+
 balrogg (https://github.com/iczelia/balrogg, GPL-3.0) was studied as a
 reference for what lossless Vorbis/Opus recompression can achieve. No code
 from it is used, copied or translated in POA.

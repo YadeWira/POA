@@ -65,13 +65,17 @@ case "${CC:-} $FPC" in *-m32*|*i386*) SEVEN=${SEVEN32:-} ;; esac
 if [ -z "$SEVEN" ] || [ ! -f "$SEVEN/$SLIB" ] || [ ! -f "$SEVEN/7z$EXE" ]; then
   echo "7-Zip: none of the library's word size here, not tried"
 else
-  Z="$OUT/7z"; rm -rf "$Z"; mkdir -p "$Z/Codecs" "$OUT/7in" "$OUT/7x"
+  Z="$OUT/7z"; rm -rf "$Z" "$OUT/7in" "$OUT/7x" "$OUT/a.7z"; mkdir -p "$Z/Codecs" "$OUT/7in" "$OUT/7x"
   cp "$SEVEN/7z$EXE" "$SEVEN/$SLIB" "$Z/"
   cp "$LIBF" "$Z/Codecs/"
   cp tests/ogg/* README.md "$OUT/7in/"
   "$Z/7z$EXE" i | grep -q '37F50 POA' || { echo "FAIL: 7-Zip does not list POA (37F50)"; exit 1; }
-  (cd "$OUT/7in" && "../7z/7z$EXE" a -bso0 -bsp0 -m0=POA -m1=LZMA2 ../a.7z .)
-  "$Z/7z$EXE" x -bso0 -bsp0 -o"$OUT/7x" "$OUT/a.7z"
+  # a fresh folder and -y: 7-Zip asks before replacing a file, and waits for
+  # an answer that never comes (a rerun in the same tree hung that way); a
+  # hang is a failure anyway, with the step (timeout where there is one)
+  TO=; command -v timeout > /dev/null && TO="timeout 600"
+  (cd "$OUT/7in" && $TO "../7z/7z$EXE" a -bso0 -bsp0 -m0=POA -m1=LZMA2 ../a.7z .) || { echo "FAIL: 7z a (exit $?)"; exit 1; }
+  $TO "$Z/7z$EXE" x -y -bso0 -bsp0 -o"$OUT/7x" "$OUT/a.7z" || { echo "FAIL: 7z x (exit $?)"; exit 1; }
   for f in "$OUT"/7in/*; do
     cmp -s "$f" "$OUT/7x/$(basename "$f")" || { echo "FAIL: 7-Zip: $(basename "$f") does not come back"; exit 1; }
   done

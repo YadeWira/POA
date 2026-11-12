@@ -28,7 +28,7 @@ unit poaformat;
 
 interface
 
-uses SysUtils, poaogg, poabits, poacm, poaside, poavorbis, poavbmodel, poablake3;
+uses SysUtils, poaogg, poabits, poacm, poaside, poavorbis, poavbmodel, poablake3, poacover, pjacodec, pjav7;
 
 const
   POA_FORMAT = 1;
@@ -43,6 +43,7 @@ type
   TPoaStats = record
     Streams, Pages, Gaps: SizeInt;
     VorbisEvents, VorbisRaw, OtherPackets: SizeInt;
+    Covers: SizeInt;              { pictures in comment headers coded through PJA }
   end;
 
 { The .poa bytes for a file. Does not verify: the caller decodes and
@@ -105,6 +106,7 @@ type
     procedure CodeStreams;
     procedure CodePacket(k: Integer; var pk: TPacket; idx: SizeInt);
     procedure NoteVorbisPacket(k: Integer; const pk: TPacket; idx: SizeInt);
+    procedure CodeCovers(const pk: TPacket; var c: TCovers);
   end;
 
 { ---- the coder ---- }
@@ -163,6 +165,85 @@ begin
   end;
 end;
 
+{ The pictures of a comment header: how many; for each, where its base64
+  starts (after the end of the one before), the PICTURE block's fields as
+  bytes, and its image: a JPEG through PJA (version 7's model, verified),
+  or anything else as bytes. Decoding fills c (Pos, Len, Block). }
+procedure TCoder.CodeCovers(const pk: TPacket; var c: TCovers);
+const
+  IMG_BYTES = 0;
+  IMG_PJA = 1;
+var
+  i, m, mode, prevEnd, hl, il: SizeInt;
+  hdr, img, st, back: TBytes;
+  r: TCodecResult;
+begin
+  if Ac.Encoding then c := CoverFind(pk);
+  m := Side.CodeNum(Ac, Length(c), 60);
+  if not Ac.Encoding then
+  begin
+    if QWord(m) > Budget div 4 then raise EPoaFormat.Create('damaged stream (covers)');
+    SetLength(c, m);
+  end;
+  prevEnd := 0;
+  for i := 0 to m - 1 do
+  begin
+    c[i].Pos := prevEnd + SizeInt(Side.CodeNum(Ac, c[i].Pos - prevEnd, 61));
+    { the block's fields }
+    hdr := nil;
+    if Ac.Encoding then hdr := Copy(c[i].Block, 0, c[i].DataPos);
+    hl := Side.CodeNum(Ac, Length(hdr), 62);
+    if not Ac.Encoding and (QWord(hl) > Budget) then raise EPoaFormat.Create('damaged stream (cover)');
+    Side.CodeBytes(Ac, hdr, hl, 1200);
+    { the image }
+    img := nil;
+    st := nil;
+    mode := IMG_BYTES;
+    if Ac.Encoding then
+    begin
+      img := Copy(c[i].Block, c[i].DataPos, Length(c[i].Block) - c[i].DataPos);
+      if (Length(img) > 4) and (img[0] = $FF) and (img[1] = $D8) then
+      begin
+        r := pjacodec.Compress(img, st, True, 1, False, True, True);
+        { a JPEG that PJA takes as bytes (asBytes) stays bytes here: it seldom shrinks }
+        if r.Ok and not r.asBytes and (Length(st) < Length(img)) then mode := IMG_PJA;
+      end;
+    end;
+    mode := Side.CodeFlag(Ac, mode, 64);
+    if mode = IMG_PJA then
+    begin
+      il := Side.CodeNum(Ac, Length(st), 63);
+      if not Ac.Encoding and (QWord(il) > Budget) then raise EPoaFormat.Create('damaged stream (cover)');
+      Side.CodeBytes(Ac, st, il, 1201);
+      if not Ac.Encoding then
+      begin
+        r := pjacodec.Decompress(st, img, 1 shl 28, 1, 0);
+        if not r.Ok then raise EPoaFormat.Create('damaged stream (cover JPEG)');
+      end;
+      Inc(Stats.Covers);
+    end
+    else
+    begin
+      il := Side.CodeNum(Ac, Length(img), 65);
+      if not Ac.Encoding and (QWord(il) > Budget) then raise EPoaFormat.Create('damaged stream (cover)');
+      Side.CodeBytes(Ac, img, il, 1202);
+    end;
+    if not Ac.Encoding then
+    begin
+      if QWord(Length(hdr) + Length(img)) > Budget then raise EPoaFormat.Create('damaged stream (cover)');
+      Dec(Budget, Length(hdr) + Length(img));
+      back := nil;
+      SetLength(back, Length(hdr) + Length(img));
+      if Length(hdr) > 0 then Move(hdr[0], back[0], Length(hdr));
+      if Length(img) > 0 then Move(img[0], back[Length(hdr)], Length(img));
+      c[i].Block := back;
+      c[i].DataPos := Length(hdr);
+      c[i].Len := ((Length(back) + 2) div 3) * 4;
+    end;
+    prevEnd := c[i].Pos + c[i].Len;
+  end;
+end;
+
 function EventBits(const s: TVorbisSetup; const p: TVbPacket): SizeInt;
 var
   i: SizeInt;
@@ -180,6 +261,8 @@ const
 procedure TCoder.CodePacket(k: Integer; var pk: TPacket; idx: SizeInt);
 var
   kind, salt: Integer;
+  covers: TCovers;
+  withCovers: Boolean;
   vp: TVbPacket;
   i, n, tailBits: SizeInt;
   tail: TBytes;
@@ -255,6 +338,14 @@ begin
   end
   else
   begin
+    { a comment header: its pictures apart (poacover), the rest as bytes }
+    covers := nil;
+    withCovers := (Streams[k].Codec in [ocVorbis, ocOpus]) and (idx = 1);
+    if withCovers then
+    begin
+      CodeCovers(pk, covers);
+      if Ac.Encoding and (Length(covers) > 0) then pk := CoverStrip(pk, covers);
+    end;
     n := Side.CodeNum(Ac, Length(pk), 3 + Ord(Streams[k].Codec) * 4);
     if not Ac.Encoding then
     begin
@@ -264,6 +355,17 @@ begin
     if idx < 3 then salt := idx else salt := 3;
     salt := 1000 + Ord(Streams[k].Codec) * 8 + salt;
     Side.CodeBytes(Ac, pk, n, salt, (Streams[k].Codec = ocVorbis) and (idx < 3));
+    if Length(covers) > 0 then
+    begin
+      if Ac.Encoding then
+        pk := Streams[k].Pk[idx]       { the packet as it was }
+      else
+        try
+          pk := CoverSplice(pk, covers);
+        except
+          raise EPoaFormat.Create('damaged stream (cover position)');
+        end;
+    end;
     if Streams[k].Codec = ocVorbis then Inc(Stats.VorbisRaw) else Inc(Stats.OtherPackets);
   end;
   if Streams[k].Codec = ocVorbis then

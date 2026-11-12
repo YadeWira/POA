@@ -14,6 +14,9 @@ still changes. What works today:
 - Vorbis audio packets are read down to their symbols and coded with a
   context-mixing model; Vorbis headers are predicted from a dictionary of
   libvorbis setups;
+- cover art in Vorbis and Opus comment headers (METADATA_BLOCK_PICTURE) is
+  taken out of its base64, and a JPEG picture goes through PJA (vendored,
+  0.9.8): a Vorbis file with a 17.6 KB cover went from 55.93% to 30.26%;
 - the other codecs (Opus, Speex, FLAC, Theora) are coded as bytes for now;
 - libpoa (`pas/lib/poa.h`) is POA as a C library and, in the same file, a
   7-Zip plugin: the method `POA` (`7z a -m0=POA -m1=LZMA2 music.7z music/`),

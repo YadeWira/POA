@@ -1,0 +1,14 @@
+PJA 0.9.8 (tag v0.9.8, commit e89a500), https://github.com/YadeWira/PJA,
+from the vendor tarball pja-0.9.8-zpaqstd.tar.gz of its release (sha256
+f777a59f904be361e337b3fcdf285d9647b9a2d70659adf5c668d186d51c5cdc, as its
+SHA256SUMS says), copied unmodified: the same files PMPA vendors.
+
+POA uses it for the JPEG pictures of Ogg comment headers (cover art in
+METADATA_BLOCK_PICTURE): pjacodec.Compress with version 7's model and
+verify, pjacodec.Decompress; pjav7 is in the program for version 7's C
+model (vendor/pja/pas/build_c.sh builds its objects). The JPEG 2000 units
+come along (pjacodec uses them) and are never called. MIT (LICENSE);
+NOTICE has PJA's third-party notes; VENDOR.md is PJA's note for zpaq-std.
+
+Do not patch these files here: changes go to the PJA repository, and a new
+release tag comes in whole, replacing this directory.

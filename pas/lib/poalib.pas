@@ -20,7 +20,7 @@ library poa;
 
 uses
   {$ifdef unix}cthreads,{$endif}{$ifdef windows}poaheap,{$endif}
-  Classes, SysUtils, poacpu, poaformat, poasysinfo;
+  Classes, SysUtils, poacpu, poaformat, poasysinfo, pjamodel;
 
 {$L poafilter.o}
 {$L poa7z.o}
@@ -144,6 +144,17 @@ begin
   if size > 0 then Move(input^, Result[0], size);
 end;
 
+{ PJA's codec (the covers' JPEGs) keeps its models in threadvars, about
+  18 MB, which nothing frees when a host's thread ends: given back at the
+  end of every call that may have used them (as PPA's libppa does) }
+procedure GiveBackModels;
+begin
+  try
+    ReleaseThreadModels;
+  except
+  end;
+end;
+
 { a caller's thread count: 1 to 64, as the 7-Zip plugin takes them; the
   filter keeps 8 jobs a thread, and a count past that would overflow }
 function Threads1to64(threads: LongInt): LongInt;
@@ -238,6 +249,7 @@ begin
       InterLockedExchange(j^.done, 1);
       RTLEventSetEvent(pool.finished);
     end;
+  GiveBackModels;
 end;
 
 function OpenPool(threads, packing: LongInt): Pointer; cdecl;
@@ -340,8 +352,12 @@ begin
   try
     { not Ogg, empty, not made smaller, or (a bug) not given back: the
       caller keeps the bytes its own way }
-    if not EncodeVerified(InBytes(input, size), c) then Exit(POA_E_NOT_TAKEN);
-    if Hand(c, output^, outSize^) then Result := POA_OK else Result := POA_E_MEMORY;
+    try
+      if not EncodeVerified(InBytes(input, size), c) then Exit(POA_E_NOT_TAKEN);
+      if Hand(c, output^, outSize^) then Result := POA_OK else Result := POA_E_MEMORY;
+    finally
+      GiveBackModels;
+    end;
   except
     on EPoaFormat do Result := POA_E_NOT_TAKEN;
     else Result := POA_E_MEMORY;
@@ -365,9 +381,13 @@ begin
     for i := 7 downto 0 do declared := (declared shl 8) or c[6 + i];
     if declared > cap then Exit(POA_E_MEMORY);
     try
-      original := PoaDecode(c);
-    except
-      on EPoaFormat do Exit(POA_E_DATA);
+      try
+        original := PoaDecode(c);
+      except
+        on EPoaFormat do Exit(POA_E_DATA);
+      end;
+    finally
+      GiveBackModels;
     end;
     if Hand(original, output^, outSize^) then Result := POA_OK else Result := POA_E_MEMORY;
   except

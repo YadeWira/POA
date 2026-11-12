@@ -32,5 +32,24 @@ $F -filter_complex "$mus" -ar 16000 -c:a libspeex "$D/speex_16k.spx"
 $F -filter_complex "$mus" -t 1 -ar 22050 -sample_fmt s16 -c:a flac "$D/flac_mono.oga"
 $F -f lavfi -i "testsrc=d=2:s=160x120:r=15" -f lavfi -i "sine=f=440:d=2" \
    -c:v libtheora -q:v 5 -c:a libvorbis -shortest "$D/theora_vorbis.ogv"
+# cover art: a FLAC PICTURE block in base64 as METADATA_BLOCK_PICTURE
+$F -f lavfi -i "testsrc=s=300x300:d=1" -frames:v 1 "$D/cover.tmp.jpg"
+$F -f lavfi -i "testsrc2=s=160x160:d=1" -frames:v 1 "$D/cover.tmp.png"
+pic() {
+  python3 - "$1" "$2" <<'PY'
+import base64, struct, sys
+d = open(sys.argv[1], 'rb').read(); mime = sys.argv[2].encode()
+blk = (struct.pack('>II', 3, len(mime)) + mime + struct.pack('>I', 5) + b'Cover'
+       + struct.pack('>IIIII', 300, 300, 24, 0, len(d)) + d)
+print(base64.b64encode(blk).decode())
+PY
+}
+$F -filter_complex "$mus" -t 3 -c:a libvorbis -q:a 3 -metadata TITLE=Sample -metadata ARTIST=POA \
+   -metadata METADATA_BLOCK_PICTURE="$(pic "$D/cover.tmp.jpg" image/jpeg)" "$D/vorbis_cover_jpeg.ogg"
+$F -filter_complex "$mus" -t 3 -c:a libopus -b:a 32k \
+   -metadata METADATA_BLOCK_PICTURE="$(pic "$D/cover.tmp.jpg" image/jpeg)" "$D/opus_cover_jpeg.opus"
+$F -filter_complex "$mus" -t 3 -c:a libvorbis -q:a 3 \
+   -metadata METADATA_BLOCK_PICTURE="$(pic "$D/cover.tmp.png" image/png)" "$D/vorbis_cover_png.ogg"
+rm -f "$D"/cover.tmp.*
 ls -la "$D" | tail -n +2
 du -sh "$D"
