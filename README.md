@@ -1,14 +1,31 @@
 # POA
 
 **packOGG Algorithm**: lossless recompression of **Ogg** files (Vorbis,
-Opus, FLAC, Speex, Theora), in FreePascal, with C for the hot loops; no
+Opus, FLAC, Speex, Theora), in FreePascal; no
 libraries. A new project of the
 [pack-algorithm family](https://github.com/YadeWira/PJA): it has its own
 codec and format, and every file is verified before anything is written.
 
-**Status: early development.** There is no release yet. The Ogg container
-layer (pages, CRCs, logical streams, packets) is done and rebuilds every
-test file byte for byte; the codec models come next.
+**Status: early development.** There is no release yet and the format
+still changes. What works today:
+
+- the Ogg container (pages, CRCs, logical streams, chained files, junk
+  between pages) is rebuilt byte for byte from the packets;
+- Vorbis audio packets are read down to their symbols and coded with a
+  context-mixing model; Vorbis headers are predicted from a dictionary of
+  libvorbis setups;
+- the other codecs (Opus, Speex, FLAC, Theora) are coded as bytes for now.
+
+Vorbis, measured on 11/11/2026 against balrogg 1.3 (`-4`, the default) on
+the 45 Vorbis files both take from our test sets (9,867,467 bytes):
+
+| Tool | Output | Of the input |
+|---|---|---|
+| balrogg 1.3 | 8,410,830 | 85.24% |
+| POA (main) | 8,214,122 | 83.24% |
+
+balrogg refuses 4 more files of the set (old 2001 encoders); POA takes
+them (70-89%). POA is about 10x slower than balrogg for now.
 
 | Sibling | Formats | Successor of |
 |---|---|---|
@@ -21,10 +38,12 @@ test file byte for byte; the codec models come next.
 
 ## Building
 
-FreePascal 3.2.2 or later:
+FreePascal 3.2.2 or later, no libraries:
 
-    fpc -O2 -Fupas -FUbuild -FEbuild pas/tests/test_ogg.pas
-    ./build/test_ogg file.ogg ...
+    ./build.sh                       # build/poa and build/tests/*
+    build/poa a file.ogg             # -> file.ogg.poa (verified before writing)
+    build/poa x file.ogg.poa -o out.ogg
+    pas/tests/corpus.sh tests/ogg/*  # round trip of the test samples
 
 ## License
 

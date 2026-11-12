@@ -25,12 +25,26 @@ type
     ByteT: array[0..3] of TCtxTable;
     ByteMx: TMixer;
     C1, C2, C3: LongWord;
+    { match model: predicts the next byte from a dictionary (Dict), at the
+      place where the last bytes were last seen in it }
+    Dict: PByte;
+    DictLen: SizeInt;
+    DictHash: array of LongInt;     { hash of 4 bytes -> position after them + 1 }
+    MPtr: SizeInt;                  { predicted byte is Dict[MPtr]; -1 = none }
+    MLen: Integer;
+    H4: LongWord;                   { the last 4 bytes of this packet }
+    NB: SizeInt;                    { bytes of this packet so far }
+    MatchT: TCtxTable;
+    UseMatch: Boolean;
     constructor Create(tabBits: Integer = 20);
+    procedure SetDict(p: PByte; n: SizeInt);
     function CodeFlag(var ac: TArith; bit, ctx: Integer): Integer;
     function CodeNumBit(var ac: TArith; bit: Integer; h: LongWord): Integer;
     function CodeNum(var ac: TArith; v: QWord; ctx: Integer): QWord;
     function CodeByte(var ac: TArith; b, salt: Integer): Integer;
-    procedure CodeBytes(var ac: TArith; var d: TBytes; n: SizeInt; salt: Integer);
+    { withDict: predict from the dictionary too (Vorbis headers) }
+    procedure CodeBytes(var ac: TArith; var d: TBytes; n: SizeInt; salt: Integer;
+      withDict: Boolean = False);
   end;
 
 
@@ -51,7 +65,12 @@ begin
   Flag.Init(12);
   if tabBits > 20 then tabBits := 20;
   for i := 0 to 3 do ByteT[i].Init(tabBits);
-  ByteMx.Init(5, 256);
+  ByteMx.Init(6, 512);
+  MatchT.Init(12);
+  Dict := nil;
+  DictLen := 0;
+  MPtr := -1;
+  UseMatch := False;
   C1 := 0; C2 := 0; C3 := 0;
 end;
 
@@ -124,17 +143,46 @@ begin
   if Trace then WriteLn(StdErr, 'N ', ctx, ' ', r);
 end;
 
+function Hash4(v: LongWord): LongWord;
+begin
+  Result := Hash3(v, 0, 99) shr 16;
+end;
+
+procedure TSideModels.SetDict(p: PByte; n: SizeInt);
+var
+  i: SizeInt;
+  v: LongWord;
+begin
+  Dict := p;
+  DictLen := n;
+  SetLength(DictHash, 65536);
+  FillChar(DictHash[0], Length(DictHash) * SizeOf(LongInt), 0);
+  v := 0;
+  for i := 0 to n - 1 do
+  begin
+    v := (v shl 8) or p[i];
+    if i >= 3 then DictHash[Hash4(v)] := i + 2;     { position after the 4 bytes, + 1 }
+  end;
+end;
+
 function TSideModels.CodeByte(var ac: TArith; b, salt: Integer): Integer;
 var
-  node, i, bit, pr: Integer;
+  node, i, bit, pr, e, eb, ml: Integer;
   h: array[0..3] of LongWord;
   sl: array[0..3] of SizeInt;
+  ms: SizeInt;
+  matching: Boolean;
+  cand: SizeInt;
 begin
   h[0] := Hash3(LongWord(salt), 0, 10);
   h[1] := Hash3(LongWord(salt), C1, 11);
   h[2] := Hash3(LongWord(salt), C1 or (C2 shl 8), 12);
   h[3] := Hash3(LongWord(salt), C1 or (C2 shl 8) or (C3 shl 16), 13);
+  matching := UseMatch and (MPtr >= 0) and (MPtr < DictLen);
+  if matching then e := Dict[MPtr] else e := 0;
+  if MLen > 15 then ml := 15 else ml := MLen;
   node := 1;
+  ms := 0;
   for i := 7 downto 0 do
   begin
     bit := (b shr i) and 1;
@@ -143,18 +191,60 @@ begin
       sl[pr] := ByteT[pr].Slot(Hash3(h[pr], LongWord(node), 14));
       ByteMx.Add(Stretch(ByteT[pr].P(sl[pr]) shr 4));
     end;
-    ByteMx.Add(256);
-    pr := ByteMx.Mix(node);
+    { the match: only while the bits so far agree with the predicted byte }
+    if matching and ((e or $100) shr (i + 1) = node) then
+    begin
+      eb := (e shr i) and 1;
+      ms := ml * 2 + eb;
+      if eb <> 0 then ByteMx.Add(Stretch(MatchT.P(ms) shr 4))
+      else ByteMx.Add(-Stretch(MatchT.P(ms) shr 4));
+      ByteMx.Add(256);
+      pr := ByteMx.Mix(node + 256);
+    end
+    else
+    begin
+      ms := -1;
+      eb := 0;
+      ByteMx.Add(0);
+      ByteMx.Add(256);
+      pr := ByteMx.Mix(node);
+    end;
     bit := ac.Code(bit, pr * 16);
     for pr := 0 to 3 do ByteT[pr].Update(sl[pr], bit);
+    if ms >= 0 then MatchT.Update(ms, Ord(bit = eb));
     ByteMx.Update(bit);
     node := (node shl 1) or bit;
   end;
   Result := node - 256;
   C3 := C2; C2 := C1; C1 := Result;
+  { follow or find the match }
+  if UseMatch then
+  begin
+    H4 := (H4 shl 8) or LongWord(Result);
+    Inc(NB);
+    if matching and (e = Result) then
+    begin
+      Inc(MPtr);
+      Inc(MLen);
+    end
+    else
+    begin
+      MPtr := -1;
+      MLen := 0;
+    end;
+    if (MPtr < 0) and (NB >= 4) and (DictLen > 0) then
+    begin
+      cand := SizeInt(DictHash[Hash4(H4)]) - 1;
+      if (cand >= 4) and (cand <= DictLen) and
+         (((LongWord(Dict[cand - 4]) shl 24) or (LongWord(Dict[cand - 3]) shl 16) or
+           (LongWord(Dict[cand - 2]) shl 8) or Dict[cand - 1]) = H4) then
+        MPtr := cand;
+    end;
+  end;
 end;
 
-procedure TSideModels.CodeBytes(var ac: TArith; var d: TBytes; n: SizeInt; salt: Integer);
+procedure TSideModels.CodeBytes(var ac: TArith; var d: TBytes; n: SizeInt; salt: Integer;
+  withDict: Boolean);
 var
   i: SizeInt;
 begin
@@ -164,8 +254,14 @@ begin
     SetLength(d, n);
   end;
   C1 := 0; C2 := 0; C3 := 0;
+  UseMatch := withDict and (DictLen > 0);
+  MPtr := -1;
+  MLen := 0;
+  H4 := 0;
+  NB := 0;
   for i := 0 to n - 1 do
     d[i] := CodeByte(ac, d[i], salt);
+  UseMatch := False;
 end;
 
 end.

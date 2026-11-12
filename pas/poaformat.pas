@@ -54,6 +54,8 @@ function PoaIsPoa(const c: TBytes): Boolean;
 
 implementation
 
+{$I poadict.inc}
+
 const
   MAGIC: array[0..3] of Byte = (Ord('P'), Ord('O'), Ord('A'), $1A);
   FLAG_STORED = 1;
@@ -99,6 +101,7 @@ begin
   inherited Create;
   TabBits := TableBits(size);
   Side := TSideModels.Create(TabBits);
+  Side.SetDict(@VORBIS_DICT[0], Length(VORBIS_DICT));
   Vm := nil;
   VmSrc := nil;
 end;
@@ -237,7 +240,7 @@ begin
     if not Ac.Encoding and (n > 1 shl 30) then raise EPoaFormat.Create('damaged stream (length)');
     if idx < 3 then salt := idx else salt := 3;
     salt := 1000 + Ord(Streams[k].Codec) * 8 + salt;
-    Side.CodeBytes(Ac, pk, n, salt);
+    Side.CodeBytes(Ac, pk, n, salt, (Streams[k].Codec = ocVorbis) and (idx < 3));
     if Streams[k].Codec = ocVorbis then Inc(Stats.VorbisRaw) else Inc(Stats.OtherPackets);
   end;
   if Streams[k].Codec = ocVorbis then

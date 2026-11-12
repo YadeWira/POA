@@ -6,3 +6,4 @@ build*/
 __pycache__/
 credenciales.md
 handoff.md
+*.poa
