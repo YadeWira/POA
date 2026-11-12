@@ -1,0 +1,54 @@
+name: Bug report
+description: Something POA did wrong, refused, or crashed on
+title: "poa: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time. The quickest way to a fix is the output of
+        `poa report FILE` (on the file it happened with): it has POA's build, the
+        system and the file's structure, and **not** the audio, its comment
+        contents or folder names. `poa report` prints a link that opens this form
+        with the report filled in below.
+  - type: textarea
+    id: body
+    attributes:
+      label: The output of poa report
+      description: Run `poa report FILE` (or `poa report` without a file) and paste all of it.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: What you ran
+      description: The exact command line(s), and what it printed.
+      placeholder: |
+        poa a song.ogg
+        poa: song.ogg: ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      description: What should have happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: file
+    attributes:
+      label: The file (if you can share it)
+      description: |
+        `poa report --with-file FILE` puts a copy beside the report. GitHub does not take
+        .ogg, .opus or .poa files as they are: zip it first. Only attach what you are free to share.
+    validations:
+      required: false
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: "`poa selftest` passes on this machine (if it fails, say so above)"
+          required: false
