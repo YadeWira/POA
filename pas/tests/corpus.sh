@@ -14,10 +14,10 @@ for f in "$@"; do
   if ! "$POA" x "$W/$n.poa" -o "$W/$n" > /dev/null 2>&1 || ! cmp -s "$f" "$W/$n"; then
     echo "FAIL(x) $n"; fail=1; continue
   fi
-  a=$(stat -c%s "$f"); c=$(stat -c%s "$W/$n.poa")
+  a=$(wc -c < "$f" | tr -d ' '); c=$(wc -c < "$W/$n.poa" | tr -d ' ')
   ta=$((ta + a)); tc=$((tc + c))
-  printf '%10d -> %10d  %6.2f%%  %s\n' "$a" "$c" "$(echo "100*$c/$a" | bc -l)" "$n"
+  awk -v a="$a" -v c="$c" -v n="$n" 'BEGIN { printf "%10d -> %10d  %6.2f%%  %s\n", a, c, 100 * c / a, n }'
   rm -f "$W/$n" "$W/$n.poa"
 done
-printf 'total %d -> %d  %.2f%%\n' "$ta" "$tc" "$(echo "100*$tc/($ta+1)" | bc -l)"
+awk -v a="$ta" -v c="$tc" 'BEGIN { printf "total %d -> %d  %.2f%%\n", a, c, 100 * c / (a + 1) }'
 exit $fail

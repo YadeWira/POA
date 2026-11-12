@@ -42,7 +42,8 @@ expect 0 "-n writes nothing"       "$POA" a -n -o dry.poa a.ogg
 expect 0 "selftest"                "$POA" selftest
 expect 0 "report without a file"   "$POA" report
 expect 2 "report --with-file without a file" "$POA" report --with-file
-touch -d '2 hours ago' .poa-tmp-99999-1
+touch .poa-tmp-99999-1
+python3 -c 'import os,time; t=time.time()-7200; os.utime(".poa-tmp-99999-1",(t,t))'
 expect 0 "--clean-temps"           "$POA" a -f --clean-temps a.ogg
 [ ! -e .poa-tmp-99999-1 ] && ok "old temporary deleted" || fail "temporary left"
 expect 0 "--version"               "$POA" --version
