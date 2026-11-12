@@ -5,8 +5,8 @@
 set -eu
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 cd "$HERE"
+./build.sh build/ci
 OUT=$HERE/build/ci
-./build.sh "$OUT"
 T=$OUT/tests
 "$T/test_blake3" pas/tests/kat.txt | tail -1
 "$T/test_side" | tail -1

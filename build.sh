@@ -8,13 +8,12 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 export POA_COMMIT=${POA_COMMIT:-$(git -C "$HERE" describe --always --dirty --abbrev=7 2> /dev/null || true)}
-OUT=${1:-$HERE/build}
+OUT=${1:-build}
 FPC=${FPC:-fpc}
-# Windows (Git Bash, MSYS2): FPC wants C:/... paths, not /c/...
-if command -v cygpath > /dev/null 2>&1; then
-  HERE=$(cygpath -m "$HERE")
-  OUT=$(cygpath -m "$OUT")
-fi
+# FPC gets paths relative to the repository: on Windows (Git Bash) an
+# absolute /d/a/... path would reach it mangled. OUT is relative to it too.
+cd "$HERE"
+HERE=.
 mkdir -p "$OUT/rel" "$OUT/tests/u"
 # -B: the program is rebuilt every time, so that it takes the commit and the date
 $FPC -B -O3 -dPOA_FAST -Fu"$HERE/pas" -FU"$OUT/rel" -o"$OUT/poa" "$HERE/pas/poa.pas" > "$OUT/fpc.log" 2>&1 \
