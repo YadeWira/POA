@@ -37,6 +37,12 @@ type
     Used: Integer;
     Tree: array of array[0..1] of Integer;   { >= 0 node, < 0: -(entry+1); 0 at a leaf slot = none }
     LookupType: Integer;
+    LookupValues: Integer;        { type 1: values per dimension (the radix) }
+    MinV, DeltaV: LongWord;       { packed float32 of the specification }
+    SeqP: Boolean;
+    Mult: array of Integer;       { multiplicands }
+    Grid: Boolean;                { type 1 and Entries = LookupValues^Dims: an entry is its digits }
+    ValQ: array of Integer;       { type 1: value of each digit, in 1/16 (deterministic, clamped) }
     function Decode(var br: TBitReader): Integer;   { -1: invalid codeword or end of packet }
     procedure Encode(var bw: TBitWriter; e: Integer);
   end;
@@ -53,6 +59,9 @@ type
     SubBooks: array of TIntArray;   { [class][1 shl sub], -1 = none }
     Multiplier, RangeBits: Integer;
     X: TIntArray;                   { all X values, with the two implicit ones first }
+    LowN, HighN: TIntArray;         { low_neighbor and high_neighbor of each X (from 2 on) }
+    Sorted: TIntArray;              { post indices in increasing X }
+    Range: Integer;                 { 256, 128, 86 or 64 }
   end;
 
   TFloor = record
@@ -280,6 +289,62 @@ begin
   Result := r;
 end;
 
+{ float32_unpack of the specification, as a fixed-point number in 1/16,
+  clamped to +-2^20: exact integer arithmetic, so every platform agrees. }
+function Unpack16(x: LongWord): Int64;
+var
+  mant: Int64;
+  e: Integer;
+begin
+  mant := x and $1FFFFF;
+  if (x and $80000000) <> 0 then mant := -mant;
+  e := Integer((x and $7FE00000) shr 21) - 788 + 4;
+  if e >= 0 then
+  begin
+    if e > 40 then e := 40;
+    if Abs(mant) > (Int64(1) shl 21) then mant := 0;
+    Result := mant * (Int64(1) shl e);
+  end
+  else if e > -63 then
+  begin
+    if mant >= 0 then Result := mant shr (-e) else Result := -((-mant) shr (-e));
+  end
+  else
+    Result := 0;
+  if Result > 1 shl 20 then Result := 1 shl 20;
+  if Result < -(1 shl 20) then Result := -(1 shl 20);
+end;
+
+{ Whether an entry of a type 1 book is just its digits (Entries is
+  exactly LookupValues^Dims), and the value of each digit. }
+procedure BookGrid(var bk: TVorbisBook);
+var
+  i: Integer;
+  p: Int64;
+  mn, dl, v: Int64;
+begin
+  bk.Grid := False;
+  if (bk.LookupType <> 1) or (bk.LookupValues < 2) or bk.SeqP then Exit;
+  p := 1;
+  for i := 1 to bk.Dims do
+  begin
+    p := p * bk.LookupValues;
+    if p > bk.Entries then Exit;
+  end;
+  if p <> bk.Entries then Exit;
+  mn := Unpack16(bk.MinV);
+  dl := Unpack16(bk.DeltaV);
+  SetLength(bk.ValQ, bk.LookupValues);
+  for i := 0 to bk.LookupValues - 1 do
+  begin
+    v := mn + (dl * bk.Mult[i]) div 16;
+    if v > 1 shl 20 then v := 1 shl 20;
+    if v < -(1 shl 20) then v := -(1 shl 20);
+    bk.ValQ[i] := v;
+  end;
+  bk.Grid := True;
+end;
+
 function ReadBook(var br: TBitReader; var bk: TVorbisBook): Boolean;
 var
   i, cur, len, num: Integer;
@@ -322,17 +387,20 @@ begin
     0: ;
     1, 2:
       begin
-        br.Read(32);
-        br.Read(32);
+        bk.MinV := br.Read(32);
+        bk.DeltaV := br.Read(32);
         vbits := br.Read(4) + 1;
-        br.Read(1);
+        bk.SeqP := br.Read(1) <> 0;
         if bk.LookupType = 1 then
           nvals := Lookup1Values(bk.Entries, bk.Dims)
         else
           nvals := bk.Entries * bk.Dims;
-        for i := 1 to nvals do
+        if nvals > 1 shl 20 then Exit;
+        bk.LookupValues := nvals;
+        SetLength(bk.Mult, nvals);
+        for i := 0 to nvals - 1 do
         begin
-          br.Read(vbits);
+          bk.Mult[i] := br.Read(vbits);
           if br.Eop then Exit;
         end;
       end;
@@ -341,6 +409,7 @@ begin
   end;
   if br.Eop then Exit;
   Result := MakeCodes(bk);
+  if Result then BookGrid(bk);
 end;
 
 { ---- headers ---- }
@@ -378,6 +447,54 @@ begin
   s.Block0 := 1 shl b0;
   s.Block1 := 1 shl b1;
   s.HaveIdent := True;
+  Result := True;
+end;
+
+{ The neighbours of each post and the posts in X order; False if two posts
+  share an X (the specification forbids it). }
+function Floor1Prepare(var f: TFloor1): Boolean;
+var
+  i, j, lo, hi, t: Integer;
+begin
+  Result := False;
+  case f.Multiplier of
+    1: f.Range := 256;
+    2: f.Range := 128;
+    3: f.Range := 86;
+  else
+    f.Range := 64;
+  end;
+  SetLength(f.LowN, Length(f.X));
+  SetLength(f.HighN, Length(f.X));
+  for i := 0 to High(f.X) do
+    for j := 0 to i - 1 do
+      if f.X[j] = f.X[i] then Exit;
+  for i := 2 to High(f.X) do
+  begin
+    lo := -1;
+    hi := -1;
+    for j := 0 to i - 1 do
+    begin
+      if (f.X[j] < f.X[i]) and ((lo < 0) or (f.X[j] > f.X[lo])) then lo := j;
+      if (f.X[j] > f.X[i]) and ((hi < 0) or (f.X[j] < f.X[hi])) then hi := j;
+    end;
+    if (lo < 0) or (hi < 0) then Exit;
+    f.LowN[i] := lo;
+    f.HighN[i] := hi;
+  end;
+  SetLength(f.Sorted, Length(f.X));
+  for i := 0 to High(f.X) do f.Sorted[i] := i;
+  for i := 1 to High(f.Sorted) do
+  begin
+    t := f.Sorted[i];
+    j := i - 1;
+    while (j >= 0) and (f.X[f.Sorted[j]] > f.X[t]) do
+    begin
+      f.Sorted[j + 1] := f.Sorted[j];
+      Dec(j);
+    end;
+    f.Sorted[j + 1] := t;
+  end;
   Result := True;
 end;
 
@@ -471,6 +588,7 @@ begin
               end;
             end;
             if Length(X) > 65 then Exit;
+            if not Floor1Prepare(F1) then Exit;
           end;
       else
         Exit;

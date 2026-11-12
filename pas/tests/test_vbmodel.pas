@@ -68,7 +68,9 @@ var
   audio, totA, totC: Int64;
   bad: Integer;
   t0: QWord;
+  tg: TVbTag;
 begin
+  VbStats := GetEnvironmentVariable('VBSTATS') <> '';
   totA := 0; totC := 0;
   vp := Default(TVbPacket);
   vq := Default(TVbPacket);
@@ -171,4 +173,9 @@ begin
     Inc(totC, Length(outb));
   end;
   WriteLn(Format('total %d -> %d  %.2f%%', [totA, totC, 100.0 * totC / totA]));
+  if VbStats then
+    for tg := Low(TVbTag) to High(TVbTag) do
+      if VbCount[tg] > 0 then
+        WriteLn(Format('  tag %2d: %9d events  %10.0f bytes  %.3f bits/event', [Ord(tg), VbCount[tg] div 2,
+          VbCost[tg] / 16, VbCost[tg] / VbCount[tg]]));
 end.
