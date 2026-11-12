@@ -45,10 +45,10 @@ type
 
   TCtxTable = record
     Bits: Integer;
-    Prob: array of Word;
-    Hits: array of Byte;
+    S: array of LongWord;       { probability (low 16 bits) and hit count (high 16) }
     procedure Init(aBits: Integer);
     function Slot(h: LongWord): SizeInt;
+    function P(i: SizeInt): Integer;
     procedure Update(i: SizeInt; bit: Integer);
   end;
 
@@ -78,11 +78,14 @@ function Stretch(p12: Integer): Integer;     { ln(p/(1-p)), scaled by 256, p in 
 function Squash(d: Integer): Integer;        { inverse; returns 12 bits }
 function Hash3(a, b, c: LongWord): LongWord;
 
+var
+  RateTab: array[0..255] of Integer;   { counter learning rate by hit count, in 1/65536 }
+  StretchTab: array[0..4095] of SmallInt;
+  SquashTab: array[-2047..2047] of SmallInt;
+
 implementation
 
-var
-  StretchTab: array[0..4095] of SmallInt;
-  RateTab: array[0..255] of Integer;
+
 
 { Squash by interpolation in a 33-point table: integers only, so every
   platform builds the same tables. }
@@ -101,8 +104,6 @@ begin
   Result := (T[i] * (128 - w) + T[i + 1] * w + 64) shr 7;
 end;
 
-var
-  SquashTab: array[-2047..2047] of SmallInt;
 
 function Squash(d: Integer): Integer;
 begin
@@ -232,16 +233,11 @@ end;
 { ---- context tables ---- }
 
 procedure TCtxTable.Init(aBits: Integer);
-var
-  i: SizeInt;
 begin
   Bits := aBits;
-  Prob := nil;
-  Hits := nil;
-  SetLength(Prob, SizeInt(1) shl aBits);
-  SetLength(Hits, SizeInt(1) shl aBits);
-  FillWord(Prob[0], Length(Prob), 32768);
-  FillChar(Hits[0], Length(Hits), 0);
+  S := nil;
+  SetLength(S, SizeInt(1) shl aBits);
+  FillDWord(S[0], Length(S), 32768);
 end;
 
 function TCtxTable.Slot(h: LongWord): SizeInt;
@@ -249,20 +245,27 @@ begin
   Result := SizeInt(h shr (32 - Bits));
 end;
 
+function TCtxTable.P(i: SizeInt): Integer;
+begin
+  Result := S[i] and $FFFF;
+end;
+
 procedure TCtxTable.Update(i: SizeInt; bit: Integer);
 var
-  p, n: Integer;
+  v: LongWord;
+  pr, n: Integer;
 begin
-  p := Prob[i];
-  n := Hits[i];
+  v := S[i];
+  pr := v and $FFFF;
+  n := v shr 16;
   if bit <> 0 then
-    p := p + (((65535 - p) * RateTab[n]) shr 16)
+    pr := pr + (((65535 - pr) * RateTab[n]) shr 16)
   else
-    p := p - ((p * RateTab[n]) shr 16);
-  if p < 32 then p := 32;
-  if p > 65503 then p := 65503;
-  Prob[i] := p;
-  if n < 127 then Hits[i] := n + 1;
+    pr := pr - ((pr * RateTab[n]) shr 16);
+  if pr < 32 then pr := 32;
+  if pr > 65503 then pr := 65503;
+  if n < 127 then Inc(n);
+  S[i] := LongWord(pr) or (LongWord(n) shl 16);
 end;
 
 { ---- mixer ---- }
@@ -294,7 +297,7 @@ begin
   dot := 0;
   for i := 0 to Cnt - 1 do
     dot := dot + Int64(X[i]) * W[Sel + i];
-  dot := dot div 65536;
+  dot := SarInt64(dot, 16);
   if dot > 2047 then dot := 2047;
   if dot < -2047 then dot := -2047;
   Pr := Squash(Integer(dot));
@@ -307,7 +310,7 @@ var
 begin
   err := (bit shl 12) - Pr;
   for i := 0 to Cnt - 1 do
-    W[Sel + i] := W[Sel + i] + Integer((Int64(X[i]) * err * MIX_RATE) div 16384);
+    W[Sel + i] := W[Sel + i] + Integer(SarInt64(Int64(X[i]) * err * MIX_RATE, 14));
   Cnt := 0;
 end;
 

@@ -38,7 +38,7 @@ uses SysUtils, poacm, poavorbis;
 
 const
   VM_INPUTS = 13;
-  VM_TAB_BITS = 22;
+  VM_TAB_BITS = 22;             { the most; smaller inputs get smaller tables (TableBits) }
   VM_HIST_BITS = 18;
 
 type
@@ -83,7 +83,10 @@ type
     function CodeBit(var ac: TArith; bit, node, sel: Integer): Integer;
     function PlaceKey(const ev: TVbEvent; withCh: Boolean): LongWord;
   public
-    constructor Create;
+    TabMask: SizeInt;
+    TabPtr: array[0..VM_INPUTS - 1] of PLongWord;
+    { tabBits: log2 of each context table's slots (TableBits of the input size) }
+    constructor Create(tabBits: Integer = VM_TAB_BITS);
     procedure SetSetup(const s: TVorbisSetup);
     procedure StartPacket;
     { Codes ev.Val (encoding) or fills it (decoding). }
@@ -91,6 +94,11 @@ type
     { The tail of a packet: nbits bits, given (encoding) or read. }
     procedure CodeTail(var ac: TArith; var bits: TBytes; nbits: SizeInt);
   end;
+
+{ Table size for an input of n bytes: about 2 slots per input byte, at
+  least 2^16, at most 2^VM_TAB_BITS. Part of the format: the decoder
+  derives it from the size in the header. }
+function TableBits(n: QWord): Integer;
 
 var
   { Statistics for tuning: bits spent per tag (only when VbStats is set). }
@@ -110,13 +118,25 @@ type
 
 implementation
 
-constructor TVbModel.Create;
+function TableBits(n: QWord): Integer;
+begin
+  Result := 16;
+  while (Result < VM_TAB_BITS) and ((QWord(1) shl (Result - 1)) < n) do Inc(Result);
+end;
+
+constructor TVbModel.Create(tabBits: Integer);
 var
   i: Integer;
 begin
   inherited Create;
+  if tabBits > VM_TAB_BITS then tabBits := VM_TAB_BITS;
+  if tabBits < 12 then tabBits := 12;
+  TabMask := (SizeInt(1) shl tabBits) - 1;
   for i := 0 to VM_INPUTS - 1 do
-    T[i].Init(VM_TAB_BITS);
+  begin
+    T[i].Init(tabBits);
+    TabPtr[i] := @T[i].S[0];
+  end;
   Mx.Init(VM_INPUTS + 1, 16 * 24);
   Apm1.Init(16 * 64);
   SetLength(PrevVal, 1 shl VM_HIST_BITS);
@@ -313,28 +333,58 @@ begin
     Result := Fl[ev.Ch].Curve[idx];
 end;
 
+{ One bit: every table's prediction, mixed, refined by the APM, coded,
+  then everything updated. Written out in full (no calls into poacm in
+  the loops) because this is where the time goes. }
 function TVbModel.CodeBit(var ac: TArith; bit, node, sel: Integer): Integer;
 var
-  i, pr, pa: Integer;
+  i, pr, pa, p, n, err, q: Integer;
+  st: array[0..VM_INPUTS] of Integer;
+  sp: array[0..VM_INPUTS - 1] of PLongWord;
+  dot: Int64;
+  w: PInteger;
+  v: LongWord;
 begin
-  { the nodes of one symbol sit next to each other in each table, so the
-    bits of a codeword mostly hit the same cache lines }
+  dot := 0;
+  w := @Mx.W[sel * Mx.NIn];
   for i := 0 to VM_INPUTS - 1 do
   begin
-    Slots[i] := (SlotBase[i] + node) and ((SizeInt(1) shl VM_TAB_BITS) - 1);
-    Mx.Add(Stretch(T[i].Prob[Slots[i]] shr 4));
+    sp[i] := @TabPtr[i][(SlotBase[i] + node) and TabMask];
+    q := StretchTab[(sp[i]^ and $FFFF) shr 4];
+    st[i] := q;
+    dot := dot + Int64(q) * w[i];
   end;
-  Mx.Add(256);
-  pr := Mx.Mix(sel);
+  st[VM_INPUTS] := 256;
+  dot := dot + Int64(256) * w[VM_INPUTS];
+  dot := SarInt64(dot, 16);
+  if dot > 2047 then dot := 2047;
+  if dot < -2047 then dot := -2047;
+  pr := SquashTab[Integer(dot)];
   pa := Apm1.Refine(pr, (sel * 4 + (node and 3)) and (16 * 64 - 1));
-  pr := (pr + 3 * pa) div 4;
-  Result := ac.Code(bit, pr * 16);
+  q := (pr + 3 * pa) div 4;
+  Result := ac.Code(bit, q * 16);
   if VbStats then
-    if Result <> 0 then VbCost[CurTag] := VbCost[CurTag] - Ln(pr / 4096) / Ln(2)
-    else VbCost[CurTag] := VbCost[CurTag] - Ln(1 - pr / 4096) / Ln(2);
+    if Result <> 0 then VbCost[CurTag] := VbCost[CurTag] - Ln(q / 4096) / Ln(2)
+    else VbCost[CurTag] := VbCost[CurTag] - Ln(1 - q / 4096) / Ln(2);
+  { tables }
   for i := 0 to VM_INPUTS - 1 do
-    T[i].Update(Slots[i], Result);
-  Mx.Update(Result);
+  begin
+    v := sp[i]^;
+    p := v and $FFFF;
+    n := v shr 16;
+    if Result <> 0 then
+      p := p + (((65535 - p) * RateTab[n]) shr 16)
+    else
+      p := p - ((p * RateTab[n]) shr 16);
+    if p < 32 then p := 32;
+    if p > 65503 then p := 65503;
+    if n < 127 then Inc(n);
+    sp[i]^ := LongWord(p) or (LongWord(n) shl 16);
+  end;
+  { mixer }
+  err := ((Result shl 12) - pr) * MIX_RATE;
+  for i := 0 to VM_INPUTS do
+    w[i] := w[i] + Integer(SarInt64(Int64(st[i]) * err, 14));
   Apm1.Update(Result);
 end;
 
@@ -502,7 +552,7 @@ begin
     tc := tc * 2 + prevBit;
     if nbits > 64 then tc := tc + 64;
     s := tc;
-    p := TailT.Prob[s];
+    p := TailT.P(s);
     bit := ac.Code(bit, p);
     TailT.Update(s, bit);
     if bit <> 0 then bits[i shr 3] := bits[i shr 3] or (1 shl (i and 7));

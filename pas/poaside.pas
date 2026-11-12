@@ -25,7 +25,7 @@ type
     ByteT: array[0..3] of TCtxTable;
     ByteMx: TMixer;
     C1, C2, C3: LongWord;
-    constructor Create;
+    constructor Create(tabBits: Integer = 20);
     function CodeFlag(var ac: TArith; bit, ctx: Integer): Integer;
     function CodeNumBit(var ac: TArith; bit: Integer; h: LongWord): Integer;
     function CodeNum(var ac: TArith; v: QWord; ctx: Integer): QWord;
@@ -42,14 +42,15 @@ var
 implementation
 
 
-constructor TSideModels.Create;
+constructor TSideModels.Create(tabBits: Integer);
 var
   i: Integer;
 begin
   inherited Create;
   Num.Init(16);
   Flag.Init(12);
-  for i := 0 to 3 do ByteT[i].Init(20);
+  if tabBits > 20 then tabBits := 20;
+  for i := 0 to 3 do ByteT[i].Init(tabBits);
   ByteMx.Init(5, 256);
   C1 := 0; C2 := 0; C3 := 0;
 end;
@@ -59,7 +60,7 @@ var
   s: SizeInt;
 begin
   s := ctx and ((1 shl 12) - 1);
-  Result := ac.Code(bit, Flag.Prob[s]);
+  Result := ac.Code(bit, Flag.P(s));
   Flag.Update(s, Result);
   if Trace then WriteLn(StdErr, 'F ', ctx, ' ', Result);
 end;
@@ -85,7 +86,7 @@ var
   s: SizeInt;
 begin
   s := Num.Slot(h);
-  Result := ac.Code(bit, Num.Prob[s]);
+  Result := ac.Code(bit, Num.P(s));
   Num.Update(s, Result);
 end;
 
@@ -140,7 +141,7 @@ begin
     for pr := 0 to 3 do
     begin
       sl[pr] := ByteT[pr].Slot(Hash3(h[pr], LongWord(node), 14));
-      ByteMx.Add(Stretch(ByteT[pr].Prob[sl[pr]] shr 4));
+      ByteMx.Add(Stretch(ByteT[pr].P(sl[pr]) shr 4));
     end;
     ByteMx.Add(256);
     pr := ByteMx.Mix(node);

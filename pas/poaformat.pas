@@ -84,7 +84,8 @@ type
     Streams: array of TStreamInfo;
     States: array of TCodecState;
     Stats: TPoaStats;
-    constructor Create;
+    TabBits: Integer;
+    constructor Create(size: QWord);
     destructor Destroy; override;
     procedure CodeStreams;
     procedure CodePacket(k: Integer; var pk: TPacket; idx: SizeInt);
@@ -93,10 +94,11 @@ type
 
 { ---- the coder ---- }
 
-constructor TCoder.Create;
+constructor TCoder.Create(size: QWord);
 begin
   inherited Create;
-  Side := TSideModels.Create;
+  TabBits := TableBits(size);
+  Side := TSideModels.Create(TabBits);
   Vm := nil;
   VmSrc := nil;
 end;
@@ -183,7 +185,7 @@ begin
   begin
     if Vm = nil then
     begin
-      Vm := TVbModel.Create;
+      Vm := TVbModel.Create(TabBits);
       VmSrc := TVbModelSource.Create;
       VmSrc.Model := Vm;
       VmSrc.Ac := @Ac;
@@ -588,7 +590,7 @@ var
   h: THash16;
 begin
   OggScan(a, sc);
-  cd := TCoder.Create;
+  cd := TCoder.Create(Length(a));
   try
     cd.Streams := Split(a, sc, ps);
     cd.Ac.InitEncode;
@@ -650,7 +652,7 @@ begin
   outLen := 0;
   sc.Clear;
   ps := nil;
-  cd := TCoder.Create;
+  cd := TCoder.Create(size);
   try
     cd.Ac.InitDecode(c, POA_HEADER);
     cd.CodeStreams;
