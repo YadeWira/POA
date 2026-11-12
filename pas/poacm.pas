@@ -13,8 +13,15 @@
 unit poacm;
 
 {$I poa.inc}
-{$ifopt R-}{$fatal poacm: range checks ($R+) are mandatory}{$endif}
-{$ifopt Q-}{$fatal poacm: overflow checks ($Q+) are mandatory}{$endif}
+{ POA_FAST: the release build of the model, without range and overflow
+  checks (every table index here is masked to the table's size). The test
+  builds keep them. }
+{$ifdef POA_FAST}
+  {$R-}{$Q-}
+{$else}
+  {$ifopt R-}{$fatal poacm: range checks ($R+) are mandatory}{$endif}
+  {$ifopt Q-}{$fatal poacm: overflow checks ($Q+) are mandatory}{$endif}
+{$endif}
 
 interface
 
@@ -40,8 +47,8 @@ type
     Prob: array of Word;
     Hits: array of Byte;
     procedure Init(aBits: Integer);
-    function Slot(h: LongWord): SizeInt; inline;
-    procedure Update(i: SizeInt; bit: Integer); inline;
+    function Slot(h: LongWord): SizeInt;
+    procedure Update(i: SizeInt; bit: Integer);
   end;
 
   TMixer = record
@@ -52,7 +59,7 @@ type
     Sel: Integer;
     Pr: Integer;                { last output, 12 bits }
     procedure Init(aNIn, aNSets: Integer);
-    procedure Add(st: Integer); inline;
+    procedure Add(st: Integer);
     function Mix(aSel: Integer): Integer;          { returns P(1) in 12 bits }
     procedure Update(bit: Integer);
   end;
@@ -66,9 +73,9 @@ type
     procedure Update(bit: Integer);
   end;
 
-function Stretch(p12: Integer): Integer; inline;     { ln(p/(1-p)), scaled by 256, p in 12 bits }
-function Squash(d: Integer): Integer; inline;        { inverse; returns 12 bits }
-function Hash3(a, b, c: LongWord): LongWord; inline;
+function Stretch(p12: Integer): Integer;     { ln(p/(1-p)), scaled by 256, p in 12 bits }
+function Squash(d: Integer): Integer;        { inverse; returns 12 bits }
+function Hash3(a, b, c: LongWord): LongWord;
 
 implementation
 
@@ -232,7 +239,7 @@ begin
   Hits := nil;
   SetLength(Prob, SizeInt(1) shl aBits);
   SetLength(Hits, SizeInt(1) shl aBits);
-  for i := 0 to High(Prob) do Prob[i] := 32768;
+  FillWord(Prob[0], Length(Prob), 32768);
   FillChar(Hits[0], Length(Hits), 0);
 end;
 

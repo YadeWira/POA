@@ -86,6 +86,9 @@ function OggStreams(const a: TBytes; const s: TOggScan): TOggStreams;
 
 function OggCodecName(c: TOggCodec): string;
 
+{ The codec of a logical stream, from its first packet. }
+function OggIdentify(const pk: TBytes): TOggCodec;
+
 type
   TPacketList = array of TBytes;
 
@@ -262,7 +265,7 @@ begin
   Wr32(Result, 22, crc);
 end;
 
-function Identify(const pk: TBytes): TOggCodec;
+function OggIdentify(const pk: TBytes): TOggCodec;
 
   function Starts(const sig: string; ofs: Integer = 0): Boolean;
   var
@@ -344,7 +347,7 @@ begin
       if pg^.Lacing[seg] < 255 then
       begin
         if (Result[k].Packets = 0) then
-          Result[k].Codec := Identify(cur[k]);
+          Result[k].Codec := OggIdentify(cur[k]);
         Inc(Result[k].Packets);
         cur[k] := nil;
         open[k] := False;

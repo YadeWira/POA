@@ -2,7 +2,7 @@
 *.ppu
 *.a
 *.exe
-build/
+build*/
 __pycache__/
 credenciales.md
 handoff.md

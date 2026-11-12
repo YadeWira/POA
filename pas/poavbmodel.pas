@@ -22,8 +22,15 @@
 unit poavbmodel;
 
 {$I poa.inc}
-{$ifopt R-}{$fatal poavbmodel: range checks ($R+) are mandatory}{$endif}
-{$ifopt Q-}{$fatal poavbmodel: overflow checks ($Q+) are mandatory}{$endif}
+{ POA_FAST: the release build of the model, without range and overflow
+  checks (every table index here is masked to the table's size). The test
+  builds keep them. }
+{$ifdef POA_FAST}
+  {$R-}{$Q-}
+{$else}
+  {$ifopt R-}{$fatal poavbmodel: range checks ($R+) are mandatory}{$endif}
+  {$ifopt Q-}{$fatal poavbmodel: overflow checks ($Q+) are mandatory}{$endif}
+{$endif}
 
 interface
 
@@ -49,6 +56,7 @@ type
     BlockFlag: Integer;
     Last1, Last2: array[0..255, 0..7] of LongWord;   { previous entries per channel and pass }
     Ctx: array[0..VM_INPUTS - 1] of LongWord;
+    SlotBase: array[0..VM_INPUTS - 1] of SizeInt;  { slot of node 0 for each context }
     Slots: array[0..VM_INPUTS - 1] of SizeInt;
     TailT: TCtxTable;
     function CodeBit(var ac: TArith; bit, node, sel: Integer): Integer;
@@ -119,9 +127,11 @@ function TVbModel.CodeBit(var ac: TArith; bit, node, sel: Integer): Integer;
 var
   i, pr, pa: Integer;
 begin
+  { the nodes of one symbol sit next to each other in each table, so the
+    bits of a codeword mostly hit the same cache lines }
   for i := 0 to VM_INPUTS - 1 do
   begin
-    Slots[i] := T[i].Slot(Hash3(Ctx[i], LongWord(node), LongWord(i)));
+    Slots[i] := (SlotBase[i] + node) and ((SizeInt(1) shl VM_TAB_BITS) - 1);
     Mx.Add(Stretch(T[i].Prob[Slots[i]] shr 4));
   end;
   Mx.Add(256);
@@ -165,6 +175,8 @@ begin
   Ctx[5] := Hash3(base, l1 or (l2 shl 16), 500);
   Ctx[6] := Hash3(base, prev or (other shl 16), 600);
   sel := Ord(ev.Tag) * 16;
+  for i := 0 to VM_INPUTS - 1 do
+    SlotBase[i] := T[i].Slot(Hash3(Ctx[i], LongWord(i), 7));
 
   if ev.IsCode then
   begin
@@ -205,7 +217,7 @@ begin
       if depth < 15 then i := depth else i := 15;
       bit := CodeBit(ac, bit, node, sel + i);
       v := v or (LongWord(bit) shl depth);
-      node := node * 2 + bit;
+      node := (node shl 1) or bit;
       if node > $FFFFFF then node := (node and $FFFF) or $10000;
     end;
   end;
