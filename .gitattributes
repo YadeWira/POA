@@ -4,3 +4,4 @@
 *.spx binary
 *.ogv binary
 *.poa binary
+*.bat text eol=crlf
