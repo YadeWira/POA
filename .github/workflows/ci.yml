@@ -1,6 +1,8 @@
-# Every platform POA supports builds the poa command, runs the unit tests,
-# the command line's checks and the round trip of every sample in
-# tests/ogg, and records the SHA-256 of every sample's .poa
+# Every platform POA supports builds the poa command and libpoa (with its
+# C part, the filter and the 7-Zip side: CC, the platform's C compiler),
+# runs the unit tests, the command line's checks, the round trip of every
+# sample in tests/ogg and libpoa's C test (Linux x64: with 7-Zip and the
+# plugin too), and records the SHA-256 of every sample's .poa
 # (.github/test.sh); the last job checks they are the same bytes
 # everywhere: the model is integer arithmetic only, so it must be.
 name: CI
@@ -26,9 +28,11 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Install Free Pascal
-        run: sudo apt-get update && sudo apt-get install -y fpc
+      - name: Install Free Pascal, clang, and 7-Zip for libpoa's plugin
+        run: sudo apt-get update && sudo apt-get install -y fpc clang 7zip
       - name: Test
+        env:
+          CC: clang
         run: sh .github/test.sh
       - uses: actions/upload-artifact@v4
         with:
@@ -39,9 +43,11 @@ jobs:
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
-      - name: Install Free Pascal
-        run: sudo apt-get update && sudo apt-get install -y fpc
+      - name: Install Free Pascal and clang
+        run: sudo apt-get update && sudo apt-get install -y fpc clang
       - name: Test
+        env:
+          CC: clang
         run: sh .github/test.sh
       - uses: actions/upload-artifact@v4
         with:
@@ -56,12 +62,13 @@ jobs:
         run: |
           sudo dpkg --add-architecture i386
           sudo apt-get update
-          sudo apt-get install -y libc6:i386 gcc-multilib
+          sudo apt-get install -y libc6:i386 gcc-multilib clang
       - name: Install the 32-bit Free Pascal
         run: scripts/fpc-i386.sh /tmp/fpc-i386
       - name: Test
         env:
           FPC: /tmp/fpc-i386/fpc
+          CC: clang -m32
         run: sh .github/test.sh
       - uses: actions/upload-artifact@v4
         with:
@@ -94,10 +101,14 @@ jobs:
           $fpc = Get-ChildItem C:\FPC -Recurse -Filter fpc.exe | Select-Object -First 1
           if (-not $fpc) { throw 'fpc.exe not found after the installer' }
           Split-Path $fpc.FullName | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding ascii
+      - name: Install the C compiler (MSYS2's MinGW-w64 clang)
+        shell: pwsh
+        run: C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed mingw-w64-x86_64-clang
       - name: Test
         shell: bash
         env:
           FPC: fpc -Px86_64
+          CC: /c/msys64/mingw64/bin/clang
         run: sh .github/test.sh
       - uses: actions/upload-artifact@v4
         with:
@@ -106,7 +117,7 @@ jobs:
       # the binaries, for testing in a Windows VM before a release
       - name: Collect the binaries
         shell: bash
-        run: mkdir -p build/ci/bin && cp build/ci/poa.exe build/ci/bin/ && ls -la build/ci/bin
+        run: mkdir -p build/ci/bin && cp build/ci/poa.exe build/ci/bin/ && cp build/ci/lib/poa.dll build/ci/bin/ && ls -la build/ci/bin
       - uses: actions/upload-artifact@v4
         with:
           name: bin-windows-x64
@@ -125,10 +136,14 @@ jobs:
           $fpc = Get-ChildItem C:\FPC -Recurse -Filter fpc.exe | Select-Object -First 1
           if (-not $fpc) { throw 'fpc.exe not found after the installer' }
           Split-Path $fpc.FullName | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding ascii
+      - name: Install the C compiler (MSYS2's MinGW-w64 gcc)
+        shell: pwsh
+        run: C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed mingw-w64-i686-gcc
       - name: Test
         shell: bash
         env:
           FPC: fpc -Pi386
+          CC: /c/msys64/mingw32/bin/gcc
         run: sh .github/test.sh
       - uses: actions/upload-artifact@v4
         with:
@@ -137,7 +152,7 @@ jobs:
       # the binaries, for testing in a Windows VM before a release
       - name: Collect the binaries
         shell: bash
-        run: mkdir -p build/ci/bin && cp build/ci/poa.exe build/ci/bin/ && ls -la build/ci/bin
+        run: mkdir -p build/ci/bin && cp build/ci/poa.exe build/ci/bin/ && cp build/ci/lib/poa.dll build/ci/bin/ && ls -la build/ci/bin
       - uses: actions/upload-artifact@v4
         with:
           name: bin-windows-x86

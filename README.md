@@ -14,7 +14,10 @@ still changes. What works today:
 - Vorbis audio packets are read down to their symbols and coded with a
   context-mixing model; Vorbis headers are predicted from a dictionary of
   libvorbis setups;
-- the other codecs (Opus, Speex, FLAC, Theora) are coded as bytes for now.
+- the other codecs (Opus, Speex, FLAC, Theora) are coded as bytes for now;
+- libpoa (`pas/lib/poa.h`) is POA as a C library and, in the same file, a
+  7-Zip plugin: the method `POA` (`7z a -m0=POA -m1=LZMA2 music.7z music/`),
+  see [doc/LIBRARY.md](doc/LIBRARY.md).
 
 Vorbis, measured on 11/11/2026 against balrogg 1.3 (`-4`, the default) on
 the 45 Vorbis files both take from our test sets (9,867,467 bytes):
