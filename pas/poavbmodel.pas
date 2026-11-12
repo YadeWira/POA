@@ -37,7 +37,7 @@ interface
 uses SysUtils, poacm, poavorbis;
 
 const
-  VM_INPUTS = 13;
+  VM_INPUTS = 10;
   VM_TAB_BITS = 22;             { the most; smaller inputs get smaller tables (TableBits) }
   VM_HIST_BITS = 18;
 
@@ -63,8 +63,6 @@ type
     CurVal: array of LongWord;        { hash(place without channel) -> value + 1, this packet }
     CurCh: array of Byte;             { which channel wrote CurVal }
     CurStamp: array of LongWord;
-    PassVal: array of LongWord;       { hash(place with channel and pass) -> value + 1, this packet }
-    PassStamp: array of LongWord;
     Stamp: LongWord;
     BlockFlag: Integer;
     Last1, Last2: array[0..255, 0..7] of LongWord;   { previous entries per channel and pass }
@@ -143,9 +141,6 @@ begin
   SetLength(CurVal, 1 shl VM_HIST_BITS);
   SetLength(CurCh, 1 shl VM_HIST_BITS);
   SetLength(CurStamp, 1 shl VM_HIST_BITS);
-  SetLength(PassVal, 1 shl VM_HIST_BITS);
-  SetLength(PassStamp, 1 shl VM_HIST_BITS);
-  FillChar(PassStamp[0], Length(PassStamp) * SizeOf(LongWord), 0);
   FillChar(PrevVal[0], Length(PrevVal) * SizeOf(LongWord), 0);
   FillChar(CurStamp[0], Length(CurStamp) * SizeOf(LongWord), 0);
   Stamp := 0;
@@ -393,9 +388,7 @@ var
   kp, kc, prev, other, l1, l2, base: LongWord;
   hp, hc: SizeInt;
   node, nx, bit, depth, i, sel: Integer;
-  fctx, pp: LongWord;
-  e2: TVbEvent;
-  hq: SizeInt;
+  fctx: LongWord;
   bk: ^TVorbisBook;
   v: LongWord;
 begin
@@ -413,16 +406,14 @@ begin
   base := LongWord(Ord(ev.Tag)) or (LongWord(ev.Book and $FFFF) shl 8) or
           (LongWord(Ord(ev.IsCode)) shl 24);
 
-  Ctx[0] := Hash3(base, 0, 0);
-  Ctx[1] := Hash3(base, LongWord(ev.Pos) or (LongWord(ev.Sub) shl 16), LongWord(ev.Pass) + 100);
-  Ctx[2] := Hash3(base, l1, 200);
-  Ctx[3] := Hash3(base, prev, 300 + LongWord(BlockFlag));
-  Ctx[4] := Hash3(base, other, 400);
-  Ctx[5] := Hash3(base, l1 or (l2 shl 16), 500);
-  Ctx[6] := Hash3(base, prev or (other shl 16), 600);
-  Ctx[7] := Hash3(base, prev or (l1 shl 16), 700);
-  Ctx[8] := Hash3(base, LongWord(ev.Pos) or (LongWord(ev.Sub) shl 12) or (LongWord(ev.Pass) shl 20), prev + 800 * 65536);
-  CurTag := ev.Tag;
+  Ctx[0] := Hash3(base, LongWord(ev.Pos) or (LongWord(ev.Sub) shl 16), LongWord(ev.Pass) + 100);
+  Ctx[1] := Hash3(base, l1, 200);
+  Ctx[2] := Hash3(base, prev, 300 + LongWord(BlockFlag));
+  Ctx[3] := Hash3(base, other, 400);
+  Ctx[4] := Hash3(base, l1 or (l2 shl 16), 500);
+  Ctx[5] := Hash3(base, prev or (other shl 16), 600);
+  Ctx[6] := Hash3(base, prev or (l1 shl 16), 700);
+  Ctx[7] := Hash3(base, LongWord(ev.Pos) or (LongWord(ev.Sub) shl 12) or (LongWord(ev.Pass) shl 20), prev + 800 * 65536);
   if VbStats then Inc(VbCount[ev.Tag]);
   { what the floor says }
   fctx := 0;
@@ -436,20 +427,8 @@ begin
     vtResClass, vtResVec:
       fctx := LongWord(ResidueLevel(ev) shr 2) or (LongWord(ev.Pass) shl 8) or $20000;
   end;
-  { the entry of the previous pass at the same place }
-  pp := 0;
-  if (ev.Tag = vtResVec) and (ev.Pass > 0) then
-  begin
-    e2 := ev;
-    e2.Pass := ev.Pass - 1;
-    e2.Book := 0;
-    hq := PlaceKey(e2, True) shr (32 - VM_HIST_BITS);
-    if PassStamp[hq] = Stamp then pp := PassVal[hq];
-  end;
-  Ctx[11] := Hash3(base, pp, 1100 + LongWord(ev.Sub));
-  Ctx[12] := Hash3(base, pp or (fctx shl 16), 1200 + l1);
-  Ctx[9] := Hash3(base, fctx, 900);
-  Ctx[10] := Hash3(base, fctx xor (prev shl 18), 1000 + l1);
+  Ctx[8] := Hash3(base, fctx, 900);
+  Ctx[9] := Hash3(base, fctx xor (prev shl 18), 1000 + l1);
   sel := Ord(ev.Tag) * 16;
   for i := 0 to VM_INPUTS - 1 do
     SlotBase[i] := T[i].Slot(Hash3(Ctx[i], LongWord(i), 7));
@@ -500,14 +479,6 @@ begin
   ev.Val := v;
 
   { history }
-  if ev.Tag = vtResVec then
-  begin
-    e2 := ev;
-    e2.Book := 0;
-    hq := PlaceKey(e2, True) shr (32 - VM_HIST_BITS);
-    PassVal[hq] := v + 1;
-    PassStamp[hq] := Stamp;
-  end;
   PrevVal[hp] := v + 1;
   CurVal[hc] := v + 1;
   CurCh[hc] := ev.Ch;
