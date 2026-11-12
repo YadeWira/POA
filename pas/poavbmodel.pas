@@ -37,7 +37,7 @@ interface
 uses SysUtils, poacm, poavorbis;
 
 const
-  VM_INPUTS = 7;
+  VM_INPUTS = 9;
   VM_TAB_BITS = 22;
   VM_HIST_BITS = 18;
 
@@ -174,6 +174,8 @@ begin
   Ctx[4] := Hash3(base, other, 400);
   Ctx[5] := Hash3(base, l1 or (l2 shl 16), 500);
   Ctx[6] := Hash3(base, prev or (other shl 16), 600);
+  Ctx[7] := Hash3(base, prev or (l1 shl 16), 700);
+  Ctx[8] := Hash3(base, LongWord(ev.Pos) or (LongWord(ev.Sub) shl 12) or (LongWord(ev.Pass) shl 20), prev + 800 * 65536);
   sel := Ord(ev.Tag) * 16;
   for i := 0 to VM_INPUTS - 1 do
     SlotBase[i] := T[i].Slot(Hash3(Ctx[i], LongWord(i), 7));

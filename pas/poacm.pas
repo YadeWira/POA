@@ -29,6 +29,7 @@ uses SysUtils;
 
 const
   CM_MAX_INPUTS = 16;
+  MIX_RATE = 10;               { mixer learning rate, in 1/16384 }
 
 type
   TArith = record
@@ -261,7 +262,7 @@ begin
   if p < 32 then p := 32;
   if p > 65503 then p := 65503;
   Prob[i] := p;
-  if n < 60 then Hits[i] := n + 1;
+  if n < 127 then Hits[i] := n + 1;
 end;
 
 { ---- mixer ---- }
@@ -304,9 +305,9 @@ procedure TMixer.Update(bit: Integer);
 var
   err, i: Integer;
 begin
-  err := ((bit shl 12) - Pr) * 6;
+  err := (bit shl 12) - Pr;
   for i := 0 to Cnt - 1 do
-    W[Sel + i] := W[Sel + i] + ((X[i] * err) div 1024);
+    W[Sel + i] := W[Sel + i] + Integer((Int64(X[i]) * err * MIX_RATE) div 16384);
   Cnt := 0;
 end;
 
