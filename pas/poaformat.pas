@@ -33,6 +33,9 @@ uses SysUtils, poaogg, poabits, poacm, poaside, poavorbis, poavbmodel, poablake3
 const
   POA_FORMAT = 1;
   POA_HEADER = 4 + 1 + 1 + 8 + 16;
+  POA_MAGIC: array[0..3] of Byte = (Ord('P'), Ord('O'), Ord('A'), $1A);
+  { header flags: bit 0, the original stored as it is }
+  POA_FLAG_STORED = 1;
 
 type
   EPoaFormat = poaside.EPoaFormat;
@@ -52,13 +55,19 @@ function PoaDecode(const c: TBytes): TBytes;
 
 function PoaIsPoa(const c: TBytes): Boolean;
 
+{ What the stream decodes to, without checking the size or the BLAKE3 the
+  header declares (the caller does: x --keep-corrupt keeps what does not
+  match). Raises EPoaFormat on a header it does not know, a damaged stream,
+  or an output that would pass cap bytes. Stored: the payload as it is. }
+function PoaDecodeData(const c: TBytes; cap: QWord): TBytes;
+
 implementation
 
 {$I poadict.inc}
 
 const
   MAGIC: array[0..3] of Byte = (Ord('P'), Ord('O'), Ord('A'), $1A);
-  FLAG_STORED = 1;
+  FLAG_STORED = POA_FLAG_STORED;
 
 type
   TPacket = TBytes;
@@ -87,6 +96,10 @@ type
     States: array of TCodecState;
     Stats: TPoaStats;
     TabBits: Integer;
+    { decoding: the most bytes the output may reach, and the packet bytes
+      still allowed (the packets are inside the output: a damaged stream
+      that declares more is refused before it is decoded) }
+    OutCap, Budget: QWord;
     constructor Create(size: QWord);
     destructor Destroy; override;
     procedure CodeStreams;
@@ -104,6 +117,8 @@ begin
   Side.SetDict(@VORBIS_DICT[0], Length(VORBIS_DICT));
   Vm := nil;
   VmSrc := nil;
+  OutCap := High(QWord);
+  Budget := High(QWord);
 end;
 
 destructor TCoder.Destroy;
@@ -208,6 +223,8 @@ begin
       tailBits := 0;
     end;
     tailBits := Side.CodeNum(Ac, tailBits, 2);
+    if not Ac.Encoding and (QWord(tailBits) div 8 > Budget) then
+      raise EPoaFormat.Create('damaged stream (Vorbis tail)');
     if Ac.Encoding then
     begin
       tail := nil;
@@ -231,13 +248,19 @@ begin
       for i := 0 to tailBits - 1 do
         bw.Bit((tail[i shr 3] shr (i and 7)) and 1);
       pk := bw.Bytes;
+      if QWord(Length(pk)) > Budget then raise EPoaFormat.Create('damaged stream (Vorbis length)');
+      Dec(Budget, Length(pk));
     end;
     Inc(Stats.VorbisEvents);
   end
   else
   begin
     n := Side.CodeNum(Ac, Length(pk), 3 + Ord(Streams[k].Codec) * 4);
-    if not Ac.Encoding and (n > 1 shl 30) then raise EPoaFormat.Create('damaged stream (length)');
+    if not Ac.Encoding then
+    begin
+      if (n > 1 shl 30) or (QWord(n) > Budget) then raise EPoaFormat.Create('damaged stream (length)');
+      Dec(Budget, n);
+    end;
     if idx < 3 then salt := idx else salt := 3;
     salt := 1000 + Ord(Streams[k].Codec) * 8 + salt;
     Side.CodeBytes(Ac, pk, n, salt, (Streams[k].Codec = ocVorbis) and (idx < 3));
@@ -252,12 +275,13 @@ var
   k, i: SizeInt;
   pk: TPacket;
   total: SizeInt;
-  cv: QWord;
+  cv, pkSum: QWord;
 begin
+  pkSum := 0;
   total := Side.CodeNum(Ac, Length(Streams), 4);
   if not Ac.Encoding then
   begin
-    if total > 1 shl 20 then raise EPoaFormat.Create('damaged stream (streams)');
+    if (total > 1 shl 20) or (QWord(total) > OutCap) then raise EPoaFormat.Create('damaged stream (streams)');
     SetLength(Streams, total);
   end;
   SetLength(States, Length(Streams));
@@ -271,7 +295,9 @@ begin
       NPk := Side.CodeNum(Ac, NPk, 7);
       if not Ac.Encoding then
       begin
-        if NPk > 1 shl 28 then raise EPoaFormat.Create('damaged stream (packets)');
+        { a packet takes a lacing byte of the output at least }
+        Inc(pkSum, QWord(NPk));
+        if (NPk > 1 shl 28) or (pkSum > OutCap) then raise EPoaFormat.Create('damaged stream (packets)');
         SetLength(Pk, NPk);
       end;
       Open := Side.CodeFlag(Ac, Ord(Open), 8) <> 0;
@@ -442,6 +468,8 @@ var
   procedure Emit(const b: TBytes; first, n: SizeInt);
   begin
     if n = 0 then Exit;
+    if not enc and (QWord(outLen) + QWord(n) > cd.OutCap) then
+      raise EPoaFormat.Create('damaged: longer than its declared size');
     while outLen + n > Length(outb) do SetLength(outb, 2 * Length(outb) + n);
     Move(b[first], outb[outLen], n);
     Inc(outLen, n);
@@ -459,7 +487,9 @@ begin
       cur[k].LastGran := 0;
     end;
     nItems := Side.CodeNum(Ac, Length(sc.Items), 20);
-    if not enc and (nItems > 1 shl 30) then raise EPoaFormat.Create('damaged stream (items)');
+    { an item gives a byte of the output at least }
+    if not enc and ((nItems > 1 shl 30) or (QWord(nItems) > cd.OutCap)) then
+      raise EPoaFormat.Create('damaged stream (items)');
     prevK := 0;
     prevKind := 1;
     for it := 0 to nItems - 1 do
@@ -625,15 +655,13 @@ begin
   if Length(body) > 0 then Move(body[0], Result[POA_HEADER], Length(body));
 end;
 
-function PoaDecode(const c: TBytes): TBytes;
+function PoaDecodeData(const c: TBytes; cap: QWord): TBytes;
 var
   cd: TCoder;
   sc: TOggScan;
   ps: TIntArray;
-  size: QWord;
+  size, pre: QWord;
   outLen: SizeInt;
-  h: THash16;
-  i: Integer;
 begin
   if not PoaIsPoa(c) then raise EPoaFormat.Create('not a .poa file');
   if c[4] <> POA_FORMAT then
@@ -644,27 +672,40 @@ begin
   Result := nil;
   if (c[5] and FLAG_STORED) <> 0 then
   begin
-    if QWord(Length(c) - POA_HEADER) <> size then raise EPoaFormat.Create('damaged: size differs');
-    Result := Copy(c, POA_HEADER, size);
-    h := Blake3_128(Result);
-    for i := 0 to 15 do
-      if h[i] <> c[14 + i] then raise EPoaFormat.Create('damaged: BLAKE3 differs');
+    if QWord(Length(c) - POA_HEADER) > cap then raise EPoaFormat.Create('damaged: longer than its declared size');
+    Result := Copy(c, POA_HEADER, Length(c) - POA_HEADER);
     Exit;
   end;
-  SetLength(Result, size);
+  { the tables are sized by the declared size, as the encoder's were }
+  pre := size;
+  if pre > cap then pre := cap;
+  SetLength(Result, pre);
   outLen := 0;
   sc.Clear;
   ps := nil;
   cd := TCoder.Create(size);
   try
+    cd.OutCap := cap;
+    cd.Budget := cap;
     cd.Ac.InitDecode(c, POA_HEADER);
     cd.CodeStreams;
     CodePages(cd, nil, sc, ps, Result, outLen);
   finally
     cd.Free;
   end;
-  if QWord(outLen) <> size then raise EPoaFormat.Create('damaged: size differs');
   SetLength(Result, outLen);
+end;
+
+function PoaDecode(const c: TBytes): TBytes;
+var
+  size: QWord;
+  h: THash16;
+  i: Integer;
+begin
+  if not PoaIsPoa(c) then raise EPoaFormat.Create('not a .poa file');
+  size := Rd64(c, 6);
+  Result := PoaDecodeData(c, size);
+  if QWord(Length(Result)) <> size then raise EPoaFormat.Create('damaged: size differs');
   h := Blake3_128(Result);
   for i := 0 to 15 do
     if h[i] <> c[14 + i] then raise EPoaFormat.Create('damaged: BLAKE3 differs');
