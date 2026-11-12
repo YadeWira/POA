@@ -6,6 +6,7 @@
 set -eu
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 cd "$HERE"
+case ${CC:-} in /*) PATH=$(dirname "$CC"):$PATH; export PATH ;; esac
 ./build.sh build/ci
 OUT=$HERE/build/ci
 FPC=${FPC:-fpc}

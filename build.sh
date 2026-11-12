@@ -16,6 +16,10 @@ cd "$HERE"
 HERE=.
 case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) EXE=.exe ;; *) EXE= ;; esac
 mkdir -p "$OUT/rel" "$OUT/tests/u" "$OUT/c"
+# a C compiler given by its full path (MSYS2's MinGW-w64 gcc on Windows)
+# needs its own folder on PATH for its DLLs and its cc1/as; without it, it
+# fails without a word (from PJA's test.sh)
+case ${CC:-} in /*) PATH=$(dirname "$CC"):$PATH; export PATH ;; esac
 # the vendored PJA's C part (the covers' JPEGs), objects found through -Fo
 sh vendor/pja/pas/build_c.sh "$OUT/c" > "$OUT/cc.log" 2>&1 || { cat "$OUT/cc.log"; exit 1; }
 V="-Fuvendor/pja/pas -Fivendor/pja/pas -Fo$OUT/c"
